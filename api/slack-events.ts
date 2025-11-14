@@ -66,16 +66,16 @@ async function fetchRxivMetadata(server: RxivServer, doi: string, retries = 2): 
   console.log(`Server: ${server}`);
   console.log(`Extracted DOI: ${doi}`);
   console.log(`Full API URL: ${apiUrl}`);
-  console.log(`Attempt: ${3 - retries}/3`);
   console.log(`=======================================`);
   
+  // Simplified approach matching the working test-fetch endpoint
   for (let attempt = 0; attempt <= retries; attempt++) {
     console.log(`========== API ATTEMPT ${attempt + 1}/${retries + 1} ==========`);
     try {
       const startTime = Date.now();
       console.log(`Making HTTPS request to: ${apiUrl}`);
       
-      // Use node-fetch with timeout wrapper (node-fetch v2 doesn't support AbortController)
+      // Use the same working fetch pattern from test-fetch.ts
       const fetchPromise = fetch(apiUrl, {
         method: 'GET',
         headers: {
@@ -83,11 +83,11 @@ async function fetchRxivMetadata(server: RxivServer, doi: string, retries = 2): 
           'Accept': 'application/json',
         },
       });
-      
+
       const timeoutPromise = new Promise((_, reject) => {
         setTimeout(() => reject(new Error('Request timeout after 10 seconds')), 10000);
       });
-      
+
       const resp = await Promise.race([fetchPromise, timeoutPromise]) as any;
       const fetchDuration = Date.now() - startTime;
       console.log(`✅ Request completed in ${fetchDuration}ms`);
@@ -140,17 +140,8 @@ async function fetchRxivMetadata(server: RxivServer, doi: string, retries = 2): 
       console.log(`=====================================================`);
       return metadata;
     } catch (err: any) {
-      const isTimeout = err.name === 'AbortError' || err.type === 'aborted' || err.message?.includes('timeout') || err.message?.includes('aborted');
+      const isTimeout = err.message?.includes('timeout');
       const isNetworkError = err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT' || err.code === 'ENOTFOUND' || err.code === 'ECONNREFUSED';
-      
-      if ((isTimeout || isNetworkError) && attempt < retries) {
-        const delay = Math.pow(2, attempt) * 1000; // Exponential backoff: 1s, 2s, 4s
-        console.log(`Network error/timeout (${err.message || err.type || err.name}), retrying in ${delay}ms...`);
-        console.log(`Will retry attempt ${attempt + 2}/${retries + 1} after delay`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-        console.log(`Retry delay completed, starting next attempt...`);
-        continue;
-      }
       
       console.error(`========== API CALL FAILED ==========`);
       console.error(`Attempt: ${attempt + 1}/${retries + 1}`);
@@ -160,6 +151,13 @@ async function fetchRxivMetadata(server: RxivServer, doi: string, retries = 2): 
       console.error(`Full error:`, err);
       console.error(`Exception stack:`, err instanceof Error ? err.stack : 'No stack trace');
       console.error(`=====================================`);
+      
+      if ((isTimeout || isNetworkError) && attempt < retries) {
+        const delay = Math.pow(2, attempt) * 1000; // Exponential backoff: 1s, 2s, 4s
+        console.log(`Network error/timeout, retrying in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
       
       if (attempt === retries) {
         console.log(`All retry attempts exhausted, returning null`);
