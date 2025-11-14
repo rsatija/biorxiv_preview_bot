@@ -82,11 +82,11 @@ async function fetchRxivMetadata(server: RxivServer, doi: string, retries = 2): 
       // Create a timeout promise with logging
       let timeoutId: NodeJS.Timeout | null = null;
       const timeoutPromise = new Promise((_, reject) => {
-        console.log(`Setting up timeout for 25 seconds...`);
+        console.log(`Setting up timeout for 5 seconds...`);
         timeoutId = setTimeout(() => {
-          console.log(`⏰ Timeout triggered after 25 seconds`);
-          reject(new Error('Request timeout after 25 seconds'));
-        }, 25000);
+          console.log(`⏰ Timeout triggered after 5 seconds`);
+          reject(new Error('Request timeout after 5 seconds'));
+        }, 5000);
         console.log(`Timeout set, ID: ${timeoutId}`);
       });
       
