@@ -70,15 +70,19 @@ async function fetchRxivMetadata(server: RxivServer, doi: string, retries = 2): 
   console.log(`=======================================`);
   
   for (let attempt = 0; attempt <= retries; attempt++) {
+    console.log(`========== API ATTEMPT ${attempt + 1}/${retries + 1} ==========`);
     try {
       // Increase timeout to 25 seconds (node-fetch v2 uses timeout option)
+      console.log(`Starting fetch request to: ${apiUrl}`);
+      const startTime = Date.now();
       const resp = await fetch(apiUrl, { 
         timeout: 25000,
         headers: {
           'User-Agent': 'bioRxiv-Preview-Bot/1.0',
         },
       } as any);
-      
+      const fetchDuration = Date.now() - startTime;
+      console.log(`Fetch completed in ${fetchDuration}ms`);
       console.log(`API response status: ${resp.status} ${resp.statusText}`);
 
       if (!resp.ok) {
@@ -95,17 +99,21 @@ async function fetchRxivMetadata(server: RxivServer, doi: string, retries = 2): 
         return null;
       }
 
+      console.log(`Parsing JSON response...`);
       const json: any = await resp.json();
+      console.log(`JSON parsed successfully`);
       console.log(`API response keys:`, Object.keys(json || {}));
       const collection = json?.collection;
       
       if (!Array.isArray(collection) || collection.length === 0) {
         console.log(`No collection found or empty collection in API response`);
+        console.log(`Response structure:`, JSON.stringify(json, null, 2).substring(0, 500));
         return null;
       }
 
       console.log(`Collection has ${collection.length} entries`);
       const entry = collection[0];
+      console.log(`First entry keys:`, Object.keys(entry || {}));
       const metadata = {
         title: (entry.title || '').trim(),
         authors: (entry.authors || '').trim(),
@@ -114,7 +122,14 @@ async function fetchRxivMetadata(server: RxivServer, doi: string, retries = 2): 
         category: entry.category,
         version: entry.version,
       };
-      console.log(`Extracted metadata - Title length: ${metadata.title.length}, Authors length: ${metadata.authors.length}, Abstract length: ${metadata.abstract.length}`);
+      console.log(`========== METADATA EXTRACTED SUCCESSFULLY ==========`);
+      console.log(`Title: ${metadata.title.substring(0, 100)}...`);
+      console.log(`Authors: ${metadata.authors.substring(0, 100)}...`);
+      console.log(`Abstract length: ${metadata.abstract.length} chars`);
+      console.log(`Date: ${metadata.date}`);
+      console.log(`Category: ${metadata.category}`);
+      console.log(`Version: ${metadata.version}`);
+      console.log(`=====================================================`);
       return metadata;
     } catch (err: any) {
       const isTimeout = err.name === 'AbortError' || err.type === 'request-timeout';
@@ -123,16 +138,23 @@ async function fetchRxivMetadata(server: RxivServer, doi: string, retries = 2): 
       if ((isTimeout || isNetworkError) && attempt < retries) {
         const delay = Math.pow(2, attempt) * 1000; // Exponential backoff: 1s, 2s, 4s
         console.log(`Network error/timeout (${err.message || err.type}), retrying in ${delay}ms...`);
+        console.log(`Will retry attempt ${attempt + 2}/${retries + 1} after delay`);
         await new Promise(resolve => setTimeout(resolve, delay));
+        console.log(`Retry delay completed, starting next attempt...`);
         continue;
       }
       
-      console.error(`Exception fetching Rxiv metadata (attempt ${attempt + 1}/${retries + 1}):`, err);
+      console.error(`========== API CALL FAILED ==========`);
+      console.error(`Attempt: ${attempt + 1}/${retries + 1}`);
       console.error(`Exception type: ${err.name || err.type || 'Unknown'}`);
       console.error(`Exception message: ${err.message || 'No message'}`);
+      console.error(`Error code: ${err.code || 'N/A'}`);
+      console.error(`Full error:`, err);
       console.error(`Exception stack:`, err instanceof Error ? err.stack : 'No stack trace');
+      console.error(`=====================================`);
       
       if (attempt === retries) {
+        console.log(`All retry attempts exhausted, returning null`);
         return null;
       }
     }
@@ -182,9 +204,18 @@ async function postToSlack(channel: string, url: string, meta: any, server: Rxiv
     ],
   };
 
-  console.log(`Posting to Slack API - Channel: ${channel}, Server: ${server}`);
+  console.log(`========== SLACK POST DETAILS ==========`);
+  console.log(`Channel: ${channel}`);
+  console.log(`Server: ${server}`);
+  console.log(`Title: ${title.substring(0, 80)}...`);
+  console.log(`Authors: ${authors.substring(0, 80)}...`);
+  console.log(`Abstract length: ${abstract.length} chars`);
   console.log(`SLACK_BOT_TOKEN present: ${SLACK_BOT_TOKEN ? 'YES' : 'NO'}`);
+  console.log(`Request body size: ${JSON.stringify(body).length} bytes`);
+  console.log(`========================================`);
   
+  console.log(`Sending POST request to Slack API...`);
+  const startTime = Date.now();
   const resp = await fetch('https://slack.com/api/chat.postMessage', {
     method: 'POST',
     headers: {
@@ -193,16 +224,25 @@ async function postToSlack(channel: string, url: string, meta: any, server: Rxiv
     },
     body: JSON.stringify(body),
   });
-
+  const fetchDuration = Date.now() - startTime;
+  console.log(`Slack API request completed in ${fetchDuration}ms`);
   console.log(`Slack API response status: ${resp.status} ${resp.statusText}`);
+  
   const data = await resp.json();
-  console.log(`Slack API response:`, JSON.stringify(data, null, 2));
+  console.log(`========== SLACK API RESPONSE ==========`);
+  console.log(`Response OK: ${data.ok}`);
+  console.log(`Full response:`, JSON.stringify(data, null, 2));
+  console.log(`========================================`);
   
   if (!data.ok) {
-    console.error('Slack chat.postMessage error:', data);
-    console.error(`Error details: ${data.error || 'Unknown error'}`);
+    console.error('❌ Slack chat.postMessage error:', data);
+    console.error(`Error code: ${data.error || 'Unknown error'}`);
+    console.error(`Error description: ${data.error_description || 'N/A'}`);
+    throw new Error(`Slack API error: ${data.error || 'Unknown error'}`);
   } else {
-    console.log(`Successfully posted message to Slack. Timestamp: ${data.ts || 'N/A'}`);
+    console.log(`✅ Successfully posted message to Slack`);
+    console.log(`Message timestamp: ${data.ts || 'N/A'}`);
+    console.log(`Channel: ${data.channel || 'N/A'}`);
   }
 }
 
@@ -364,15 +404,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             console.log(`${requestId} No metadata returned for ${server} DOI ${doi}`);
             continue;
           }
-          console.log(`${requestId} Metadata retrieved:`, {
-            title: meta.title?.substring(0, 50) + '...',
-            authors: meta.authors?.substring(0, 50) + '...',
-            hasAbstract: !!meta.abstract,
-          });
+          console.log(`${requestId} ========== METADATA RETRIEVED ==========`);
+          console.log(`${requestId} Title: ${meta.title?.substring(0, 100)}...`);
+          console.log(`${requestId} Authors: ${meta.authors?.substring(0, 100)}...`);
+          console.log(`${requestId} Has abstract: ${!!meta.abstract} (length: ${meta.abstract?.length || 0})`);
+          console.log(`${requestId} =========================================`);
           
-          console.log(`${requestId} Posting to Slack channel: ${channel}`);
-          await postToSlack(channel, url, meta, server);
-          console.log(`${requestId} Successfully posted preview to Slack`);
+          console.log(`${requestId} ========== POSTING TO SLACK ==========`);
+          console.log(`${requestId} Channel: ${channel}`);
+          console.log(`${requestId} URL: ${url}`);
+          console.log(`${requestId} Server: ${server}`);
+          try {
+            await postToSlack(channel, url, meta, server);
+            console.log(`${requestId} ✅ Successfully posted preview to Slack`);
+          } catch (slackErr) {
+            console.error(`${requestId} ❌ Error posting to Slack:`, slackErr);
+            console.error(`${requestId} Error stack:`, slackErr instanceof Error ? slackErr.stack : 'No stack trace');
+            throw slackErr; // Re-throw to be caught by outer try-catch
+          }
+          console.log(`${requestId} ======================================`);
         } catch (err) {
           console.error(`${requestId} Error handling ${server} link ${url}:`, err);
           console.error(`${requestId} Error stack:`, err instanceof Error ? err.stack : 'No stack trace');
