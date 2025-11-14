@@ -1,7 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import crypto from 'crypto';
-import https from 'https';
-import { URL } from 'url';
+import fetch from 'node-fetch';
 
 const SLACK_SIGNING_SECRET = process.env.SLACK_SIGNING_SECRET!;
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN!;
@@ -73,65 +72,25 @@ async function fetchRxivMetadata(server: RxivServer, doi: string, retries = 2): 
   for (let attempt = 0; attempt <= retries; attempt++) {
     console.log(`========== API ATTEMPT ${attempt + 1}/${retries + 1} ==========`);
     try {
-      // Use Node's native https module instead of fetch for better reliability
-      console.log(`Starting HTTPS request to: ${apiUrl}`);
       const startTime = Date.now();
-      const urlObj = new URL(apiUrl);
+      console.log(`Making HTTPS request to: ${apiUrl}`);
       
-      const resp = await new Promise<any>((resolve, reject) => {
-        console.log(`Making HTTPS request to ${urlObj.hostname}${urlObj.pathname}`);
-        const req = https.get({
-          hostname: urlObj.hostname,
-          path: urlObj.pathname + urlObj.search,
-          headers: {
-            'User-Agent': 'bioRxiv-Preview-Bot/1.0',
-            'Accept': 'application/json',
-          },
-        }, (res) => {
-          clearTimeout(timeoutId);
-          console.log(`✅ HTTPS response received: ${res.statusCode} ${res.statusMessage}`);
-          
-          let data = '';
-          res.on('data', (chunk) => {
-            data += chunk;
-          });
-          
-          res.on('end', () => {
-            const fetchDuration = Date.now() - startTime;
-            console.log(`Response body received (${data.length} bytes) in ${fetchDuration}ms`);
-            
-            // Create a response-like object
-            resolve({
-              status: res.statusCode || 200,
-              statusText: res.statusMessage || 'OK',
-              ok: (res.statusCode || 0) >= 200 && (res.statusCode || 0) < 300,
-              headers: res.headers,
-              text: () => Promise.resolve(data),
-              json: () => Promise.resolve(JSON.parse(data)),
-            });
-          });
-        });
-        
-        req.on('error', (err) => {
-          clearTimeout(timeoutId);
-          console.error(`HTTPS request error:`, err);
-          reject(err);
-        });
-        
-        const timeoutId = setTimeout(() => {
-          req.destroy();
-          reject(new Error('Request timeout after 5 seconds'));
-        }, 5000);
-        
-        req.setTimeout(5000, () => {
-          req.destroy();
-          clearTimeout(timeoutId);
-          reject(new Error('Request timeout after 5 seconds'));
-        });
+      // Use node-fetch with timeout wrapper (node-fetch v2 doesn't support AbortController)
+      const fetchPromise = fetch(apiUrl, {
+        method: 'GET',
+        headers: {
+          'User-Agent': 'bioRxiv-Preview-Bot/1.0',
+          'Accept': 'application/json',
+        },
       });
       
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Request timeout after 10 seconds')), 10000);
+      });
+      
+      const resp = await Promise.race([fetchPromise, timeoutPromise]) as any;
       const fetchDuration = Date.now() - startTime;
-      console.log(`✅ Request completed successfully in ${fetchDuration}ms`);
+      console.log(`✅ Request completed in ${fetchDuration}ms`);
       console.log(`API response status: ${resp.status} ${resp.statusText}`);
 
       if (!resp.ok) {
@@ -181,12 +140,12 @@ async function fetchRxivMetadata(server: RxivServer, doi: string, retries = 2): 
       console.log(`=====================================================`);
       return metadata;
     } catch (err: any) {
-      const isTimeout = err.name === 'AbortError' || err.type === 'request-timeout';
-      const isNetworkError = err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT' || err.code === 'ENOTFOUND';
+      const isTimeout = err.name === 'AbortError' || err.type === 'aborted' || err.message?.includes('timeout') || err.message?.includes('aborted');
+      const isNetworkError = err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT' || err.code === 'ENOTFOUND' || err.code === 'ECONNREFUSED';
       
       if ((isTimeout || isNetworkError) && attempt < retries) {
         const delay = Math.pow(2, attempt) * 1000; // Exponential backoff: 1s, 2s, 4s
-        console.log(`Network error/timeout (${err.message || err.type}), retrying in ${delay}ms...`);
+        console.log(`Network error/timeout (${err.message || err.type || err.name}), retrying in ${delay}ms...`);
         console.log(`Will retry attempt ${attempt + 2}/${retries + 1} after delay`);
         await new Promise(resolve => setTimeout(resolve, delay));
         console.log(`Retry delay completed, starting next attempt...`);
