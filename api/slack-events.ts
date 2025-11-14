@@ -75,29 +75,12 @@ async function fetchRxivMetadata(server: RxivServer, doi: string, originalUrl: s
     try {
       const startTime = Date.now();
       console.log(`Calling test-fetch endpoint: ${testFetchUrl}`);
-      
-      const fetchPromise = fetch(testFetchUrl, {
-        method: 'GET',
-        headers: {
-          'User-Agent': 'bioRxiv-Preview-Bot/1.0',
-          'Accept': 'application/json',
-        },
-      });
-      console.log(`Call happened here`);
 
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Request timeout after 15 seconds')), 15000);
+      const resp = await fetch(testFetchUrl, {
+        headers: { 'Accept': 'application/json' },
       });
       console.log(`Call2 happened here`);
-
-      const resp = await Promise.race([fetchPromise, timeoutPromise]) as any;
-      console.log(`Call3 happened here`);
-      const fetchDuration = Date.now() - startTime;
-      console.log(`Call4 happened here`);
-      console.log(`✅ Request completed in ${fetchDuration}ms`);
-      console.log(`Call5 happened here`);
-      console.log(`API response status: ${resp.status} ${resp.statusText}`);
-      console.log(`Call6 happened here`);
+      
       if (!resp.ok) {
         console.error(`Test-fetch endpoint error: ${resp.status}`);
         if (resp.status >= 500 && attempt < retries) {
@@ -114,6 +97,7 @@ async function fetchRxivMetadata(server: RxivServer, doi: string, originalUrl: s
 
       console.log(`Parsing JSON response...`);
       const json: any = await resp.json();
+      console.log(`Call3 happened here`);
       console.log(`JSON parsed successfully`);
       
       if (!json.success) {
