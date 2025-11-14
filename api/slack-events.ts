@@ -59,14 +59,8 @@ type RxivServer = 'biorxiv' | 'medrxiv';
 
 async function fetchRxivMetadata(server: RxivServer, doi: string, originalUrl: string, retries = 2): Promise<any> {
   // Use the working test-fetch endpoint as a proxy to avoid fetch issues
-  // Get the base URL from environment or use the known working URL
-  // VERCEL_URL is available in Vercel deployments (without https:// prefix)
-  // VERCEL is the deployment URL
-  const baseUrl = process.env.VERCEL_URL 
-    ? `https://${process.env.VERCEL_URL}` 
-    : process.env.VERCEL
-    ? `https://${process.env.VERCEL}`
-    : 'https://biorxiv-preview-bot.vercel.app';
+  // Always use the production URL
+  const baseUrl = 'https://biorxiv-preview-bot.vercel.app';
   const testFetchUrl = `${baseUrl}/api/test-fetch?url=${encodeURIComponent(originalUrl)}`;
   
   console.log(`========== API CALL DETAILS ==========`);
