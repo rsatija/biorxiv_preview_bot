@@ -57,26 +57,32 @@ function extractDoi(url: string): string | null {
 
 type RxivServer = 'biorxiv' | 'medrxiv';
 
-async function fetchRxivMetadata(server: RxivServer, doi: string, retries = 2): Promise<any> {
-  // DOI should NOT be URL-encoded - use as-is in the path
-  // Format: https://api.biorxiv.org/details/[server]/[DOI]/na/json
-  // Example: https://api.biorxiv.org/details/biorxiv/10.1101/2020.02.19.955666/na/json
-  const apiUrl = `https://api.${server}.org/details/${server}/${doi}/na/json`;
+async function fetchRxivMetadata(server: RxivServer, doi: string, originalUrl: string, retries = 2): Promise<any> {
+  // Use the working test-fetch endpoint as a proxy to avoid fetch issues
+  // Get the base URL from environment or use the known working URL
+  // VERCEL_URL is available in Vercel deployments (without https:// prefix)
+  // VERCEL is the deployment URL
+  const baseUrl = process.env.VERCEL_URL 
+    ? `https://${process.env.VERCEL_URL}` 
+    : process.env.VERCEL
+    ? `https://${process.env.VERCEL}`
+    : 'https://biorxiv-preview-bot.vercel.app';
+  const testFetchUrl = `${baseUrl}/api/test-fetch?url=${encodeURIComponent(originalUrl)}`;
+  
   console.log(`========== API CALL DETAILS ==========`);
   console.log(`Server: ${server}`);
   console.log(`Extracted DOI: ${doi}`);
-  console.log(`Full API URL: ${apiUrl}`);
+  console.log(`Original URL: ${originalUrl}`);
+  console.log(`Test-fetch endpoint: ${testFetchUrl}`);
   console.log(`=======================================`);
   
-  // Simplified approach matching the working test-fetch endpoint
   for (let attempt = 0; attempt <= retries; attempt++) {
     console.log(`========== API ATTEMPT ${attempt + 1}/${retries + 1} ==========`);
     try {
       const startTime = Date.now();
-      console.log(`Making HTTPS request to: ${apiUrl}`);
+      console.log(`Calling test-fetch endpoint: ${testFetchUrl}`);
       
-      // Use the same working fetch pattern from test-fetch.ts
-      const fetchPromise = fetch(apiUrl, {
+      const fetchPromise = fetch(testFetchUrl, {
         method: 'GET',
         headers: {
           'User-Agent': 'bioRxiv-Preview-Bot/1.0',
@@ -85,7 +91,7 @@ async function fetchRxivMetadata(server: RxivServer, doi: string, retries = 2): 
       });
 
       const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Request timeout after 10 seconds')), 10000);
+        setTimeout(() => reject(new Error('Request timeout after 15 seconds')), 15000);
       });
 
       const resp = await Promise.race([fetchPromise, timeoutPromise]) as any;
@@ -94,7 +100,7 @@ async function fetchRxivMetadata(server: RxivServer, doi: string, retries = 2): 
       console.log(`API response status: ${resp.status} ${resp.statusText}`);
 
       if (!resp.ok) {
-        console.error(`Rxiv API error for ${server}, DOI ${doi}: ${resp.status}`);
+        console.error(`Test-fetch endpoint error: ${resp.status}`);
         if (resp.status >= 500 && attempt < retries) {
           // Retry on server errors
           const delay = Math.pow(2, attempt) * 1000; // Exponential backoff: 1s, 2s, 4s
@@ -110,34 +116,28 @@ async function fetchRxivMetadata(server: RxivServer, doi: string, retries = 2): 
       console.log(`Parsing JSON response...`);
       const json: any = await resp.json();
       console.log(`JSON parsed successfully`);
-      console.log(`API response keys:`, Object.keys(json || {}));
-      const collection = json?.collection;
       
-      if (!Array.isArray(collection) || collection.length === 0) {
-        console.log(`No collection found or empty collection in API response`);
-        console.log(`Response structure:`, JSON.stringify(json, null, 2).substring(0, 500));
+      if (!json.success) {
+        console.error(`Test-fetch returned error:`, json.error || 'Unknown error');
         return null;
       }
 
-      console.log(`Collection has ${collection.length} entries`);
-      const entry = collection[0];
-      console.log(`First entry keys:`, Object.keys(entry || {}));
-      const metadata = {
-        title: (entry.title || '').trim(),
-        authors: (entry.authors || '').trim(),
-        abstract: (entry.abstract || '').trim(),
-        date: entry.date,
-        category: entry.category,
-        version: entry.version,
-      };
+      // Extract metadata from the test-fetch response format
+      const metadata = json.metadata;
+      if (!metadata) {
+        console.error(`No metadata in test-fetch response`);
+        return null;
+      }
+
       console.log(`========== METADATA EXTRACTED SUCCESSFULLY ==========`);
-      console.log(`Title: ${metadata.title.substring(0, 100)}...`);
-      console.log(`Authors: ${metadata.authors.substring(0, 100)}...`);
-      console.log(`Abstract length: ${metadata.abstract.length} chars`);
-      console.log(`Date: ${metadata.date}`);
-      console.log(`Category: ${metadata.category}`);
-      console.log(`Version: ${metadata.version}`);
+      console.log(`Title: ${metadata.title?.substring(0, 100) || 'N/A'}...`);
+      console.log(`Authors: ${metadata.authors?.substring(0, 100) || 'N/A'}...`);
+      console.log(`Abstract length: ${metadata.abstract?.length || 0} chars`);
+      console.log(`Date: ${metadata.date || 'N/A'}`);
+      console.log(`Category: ${metadata.category || 'N/A'}`);
+      console.log(`Version: ${metadata.version || 'N/A'}`);
       console.log(`=====================================================`);
+      
       return metadata;
     } catch (err: any) {
       const isTimeout = err.message?.includes('timeout');
@@ -405,7 +405,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         try {
           console.log(`${requestId} Fetching metadata for ${server} DOI: ${doi}`);
-          const meta = await fetchRxivMetadata(server, doi);
+          const meta = await fetchRxivMetadata(server, doi, url);
           if (!meta) {
             console.log(`${requestId} No metadata returned for ${server} DOI ${doi}`);
             continue;
