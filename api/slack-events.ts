@@ -57,47 +57,80 @@ function extractDoi(url: string): string | null {
 
 type RxivServer = 'biorxiv' | 'medrxiv';
 
-async function fetchRxivMetadata(server: RxivServer, doi: string) {
+async function fetchRxivMetadata(server: RxivServer, doi: string, retries = 2): Promise<any> {
   const apiUrl = `https://api.${server}.org/details/${server}/${encodeURIComponent(doi)}/na/json`;
-  console.log(`Fetching from API: ${apiUrl}`);
+  console.log(`Fetching from API: ${apiUrl} (attempt ${3 - retries}/3)`);
   
-  try {
-    const resp = await fetch(apiUrl, { timeout: 10000 as any });
-    console.log(`API response status: ${resp.status} ${resp.statusText}`);
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      // Increase timeout to 25 seconds (node-fetch v2 uses timeout option)
+      const resp = await fetch(apiUrl, { 
+        timeout: 25000,
+        headers: {
+          'User-Agent': 'bioRxiv-Preview-Bot/1.0',
+        },
+      } as any);
+      
+      console.log(`API response status: ${resp.status} ${resp.statusText}`);
 
-    if (!resp.ok) {
-      console.error(`Rxiv API error for ${server}, DOI ${doi}: ${resp.status}`);
-      const errorText = await resp.text();
-      console.error(`API error response: ${errorText.substring(0, 500)}`);
-      return null;
+      if (!resp.ok) {
+        console.error(`Rxiv API error for ${server}, DOI ${doi}: ${resp.status}`);
+        if (resp.status >= 500 && attempt < retries) {
+          // Retry on server errors
+          const delay = Math.pow(2, attempt) * 1000; // Exponential backoff: 1s, 2s, 4s
+          console.log(`Server error, retrying in ${delay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        const errorText = await resp.text();
+        console.error(`API error response: ${errorText.substring(0, 500)}`);
+        return null;
+      }
+
+      const json: any = await resp.json();
+      console.log(`API response keys:`, Object.keys(json || {}));
+      const collection = json?.collection;
+      
+      if (!Array.isArray(collection) || collection.length === 0) {
+        console.log(`No collection found or empty collection in API response`);
+        return null;
+      }
+
+      console.log(`Collection has ${collection.length} entries`);
+      const entry = collection[0];
+      const metadata = {
+        title: (entry.title || '').trim(),
+        authors: (entry.authors || '').trim(),
+        abstract: (entry.abstract || '').trim(),
+        date: entry.date,
+        category: entry.category,
+        version: entry.version,
+      };
+      console.log(`Extracted metadata - Title length: ${metadata.title.length}, Authors length: ${metadata.authors.length}, Abstract length: ${metadata.abstract.length}`);
+      return metadata;
+    } catch (err: any) {
+      const isTimeout = err.name === 'AbortError' || err.type === 'request-timeout';
+      const isNetworkError = err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT' || err.code === 'ENOTFOUND';
+      
+      if ((isTimeout || isNetworkError) && attempt < retries) {
+        const delay = Math.pow(2, attempt) * 1000; // Exponential backoff: 1s, 2s, 4s
+        console.log(`Network error/timeout (${err.message || err.type}), retrying in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      
+      console.error(`Exception fetching Rxiv metadata (attempt ${attempt + 1}/${retries + 1}):`, err);
+      console.error(`Exception type: ${err.name || err.type || 'Unknown'}`);
+      console.error(`Exception message: ${err.message || 'No message'}`);
+      console.error(`Exception stack:`, err instanceof Error ? err.stack : 'No stack trace');
+      
+      if (attempt === retries) {
+        return null;
+      }
     }
-
-    const json: any = await resp.json();
-    console.log(`API response keys:`, Object.keys(json || {}));
-    const collection = json?.collection;
-    
-    if (!Array.isArray(collection) || collection.length === 0) {
-      console.log(`No collection found or empty collection in API response`);
-      return null;
-    }
-
-    console.log(`Collection has ${collection.length} entries`);
-    const entry = collection[0];
-    const metadata = {
-      title: (entry.title || '').trim(),
-      authors: (entry.authors || '').trim(),
-      abstract: (entry.abstract || '').trim(),
-      date: entry.date,
-      category: entry.category,
-      version: entry.version,
-    };
-    console.log(`Extracted metadata - Title length: ${metadata.title.length}, Authors length: ${metadata.authors.length}, Abstract length: ${metadata.abstract.length}`);
-    return metadata;
-  } catch (err) {
-    console.error(`Exception fetching Rxiv metadata:`, err);
-    console.error(`Exception stack:`, err instanceof Error ? err.stack : 'No stack trace');
-    return null;
   }
+  
+  return null;
 }
 
 async function postToSlack(channel: string, url: string, meta: any, server: RxivServer) {
@@ -247,6 +280,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const event = payload.event;
     console.log(`${requestId} Event type: ${event?.type}`);
     console.log(`${requestId} Event details:`, JSON.stringify(event, null, 2));
+    
+    // Log ALL event types to help debug
+    if (event?.type !== 'link_shared') {
+      console.log(`${requestId} Received event type '${event?.type}' - not link_shared, but logging for debugging`);
+    }
     
     if (event?.type === 'link_shared') {
       console.log(`${requestId} ========== LINK SHARED EVENT ==========`);

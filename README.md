@@ -16,10 +16,25 @@ A Slack bot that automatically detects and previews bioRxiv and medRxiv preprint
 1. In your app settings, go to **OAuth & Permissions** (left sidebar)
 2. Under **Bot Token Scopes**, add:
    - `chat:write` - To post messages
-   - `links:read` - To read shared links (if available)
+   - `links:read` - To read shared links (required for link_shared events)
 3. Scroll up and click **Install to Workspace**
 4. Authorize the app and copy the **Bot User OAuth Token** (starts with `xoxb-`)
    - This is your `SLACK_BOT_TOKEN`
+
+### 2b. Register Unfurl Domains ⚠️ **CRITICAL**
+
+> **Important**: Slack only sends `link_shared` events for domains you register for unfurling. This step is required!
+
+1. In your app settings, go to **Event Subscriptions** (left sidebar)
+2. Scroll down to find **App unfurl domains** (or look for "Unfurl domains" in the left sidebar under **Features**)
+3. Add the following domains:
+   - `biorxiv.org`
+   - `medrxiv.org`
+4. **After adding domains, you MUST reinstall the app**:
+   - Go to **OAuth & Permissions**
+   - Click **Reinstall to Workspace**
+   - Authorize the app again
+5. Without this step, Slack will NOT send `link_shared` events for bioRxiv/medRxiv links!
 
 ### 3. Enable Events API ⚠️ **CRITICAL STEP**
 
@@ -130,10 +145,12 @@ If you post a link but see **no logs at all** in Vercel, Slack isn't calling you
 
 2. **Check Slack Event Subscriptions Configuration**
    - Go to your Slack app → **Event Subscriptions**
-   - Verify **Enable Events** is toggled **ON** (green)
-   - Check the **Request URL** shows a green checkmark ✅
-   - If there's a red X, click "Reinstall App" or verify the URL is correct
+   - Verify **Enable Events** is toggled **ON** (green toggle at the top)
+   - Check the **Request URL** field - it should show a green checkmark ✅ next to it
+   - If there's a red X or error message, the URL verification failed
    - The URL must be exactly: `https://your-project.vercel.app/api/slack-events`
+   - Try clicking "Save Changes" - Slack will attempt to verify the URL
+   - If verification fails, check that your Vercel deployment is live and the endpoint is accessible
 
 3. **Verify Bot Events Subscription**
    - In Event Subscriptions, scroll to **Subscribe to bot events**
@@ -144,20 +161,40 @@ If you post a link but see **no logs at all** in Vercel, Slack isn't calling you
    - The bot must be **invited to the channel** where you're posting
    - Type `/invite @YourBotName` in the channel
    - Or add the bot through channel settings → Integrations
+   - **This is critical** - the bot won't receive events if it's not in the channel!
 
-5. **Check Slack's Event Delivery Status**
-   - In Event Subscriptions, scroll down to see recent event deliveries
-   - Look for any failed deliveries or errors
-   - If you see failures, check the error message
-
-6. **Verify Bot Token Scopes**
+5. **Verify Bot Token Scopes**
    - Go to **OAuth & Permissions**
    - Ensure `chat:write` scope is added
    - If you added scopes after installation, click **Reinstall to Workspace**
 
+6. **Test the URL Verification**
+   - Since the endpoint is reachable (you can see the health check), verify the Request URL in Slack:
+   - In Event Subscriptions, check if the Request URL shows a green checkmark ✅
+   - If it shows a red X or error, the URL might be incorrect
+   - To trigger a new verification: add a space to the Request URL, then remove it, then click "Save Changes"
+   - Or try changing the URL slightly and changing it back
+   - After saving, check your Vercel logs - you should see a `url_verification` event
+   - If you see the verification event in logs, Slack can reach your endpoint
+
 7. **Test with a Direct Message**
    - Try posting a bioRxiv link in a DM with the bot
    - This helps isolate channel permission issues
+   - Make sure the bot can receive DMs (check app settings)
+
+8. **Important: How `link_shared` Events Work**
+   - The `link_shared` event **only fires when Slack unfurls (previews) a link**
+   - If link previews are disabled in your workspace/channel, the event won't fire
+   - Try posting a link and wait a few seconds for Slack to unfurl it
+   - Make sure link previews are enabled in your Slack workspace settings
+   - The event fires when Slack processes the link for preview, not immediately when posted
+
+9. **Double-Check the Most Common Issues**
+   - ✅ `link_shared` event is subscribed (Event Subscriptions → Subscribe to bot events)
+   - ✅ Bot is invited to the channel
+   - ✅ Request URL has a green checkmark in Slack
+   - ✅ Enable Events is toggled ON
+   - ✅ Link previews are enabled in Slack
 
 ### Other Issues
 
