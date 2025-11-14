@@ -72,18 +72,47 @@ async function fetchRxivMetadata(server: RxivServer, doi: string, retries = 2): 
   for (let attempt = 0; attempt <= retries; attempt++) {
     console.log(`========== API ATTEMPT ${attempt + 1}/${retries + 1} ==========`);
     try {
-      // Increase timeout to 25 seconds (node-fetch v2 uses timeout option)
+      // Use Promise.race with manual timeout since node-fetch v2 timeout may not work reliably
       console.log(`Starting fetch request to: ${apiUrl}`);
       const startTime = Date.now();
-      const resp = await fetch(apiUrl, { 
-        timeout: 25000,
+      
+      // Create a timeout promise
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => {
+          reject(new Error('Request timeout after 25 seconds'));
+        }, 25000);
+      });
+      
+      // Create the fetch promise with error handling
+      const fetchPromise = fetch(apiUrl, {
         headers: {
           'User-Agent': 'bioRxiv-Preview-Bot/1.0',
+          'Accept': 'application/json',
         },
-      } as any);
+      } as any).catch((fetchErr) => {
+        console.error(`Fetch promise rejected:`, fetchErr);
+        console.error(`Fetch error type: ${fetchErr.name || fetchErr.type || 'Unknown'}`);
+        console.error(`Fetch error message: ${fetchErr.message || 'No message'}`);
+        throw fetchErr;
+      });
+      
+      console.log(`Created fetch and timeout promises, starting race...`);
+      // Race between fetch and timeout
+      const resp = await Promise.race([fetchPromise, timeoutPromise]) as any;
       const fetchDuration = Date.now() - startTime;
-      console.log(`Fetch completed in ${fetchDuration}ms`);
+      console.log(`✅ Fetch completed successfully in ${fetchDuration}ms`);
       console.log(`API response status: ${resp.status} ${resp.statusText}`);
+      if (resp.headers) {
+        try {
+          const headersObj: any = {};
+          resp.headers.forEach((value: string, key: string) => {
+            headersObj[key] = value;
+          });
+          console.log(`Response headers:`, JSON.stringify(headersObj, null, 2));
+        } catch (e) {
+          console.log(`Could not log response headers:`, e);
+        }
+      }
 
       if (!resp.ok) {
         console.error(`Rxiv API error for ${server}, DOI ${doi}: ${resp.status}`);
