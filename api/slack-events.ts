@@ -1,6 +1,9 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import crypto from 'crypto';
-import fetch from 'node-fetch';
+import nodeFetch from 'node-fetch';
+
+// Use native fetch if available (Node 18+), otherwise fall back to node-fetch
+const fetch = (globalThis as any).fetch || nodeFetch;
 
 const SLACK_SIGNING_SECRET = process.env.SLACK_SIGNING_SECRET!;
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN!;
