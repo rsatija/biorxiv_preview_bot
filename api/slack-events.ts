@@ -76,32 +76,59 @@ async function fetchRxivMetadata(server: RxivServer, doi: string, retries = 2): 
       console.log(`Starting fetch request to: ${apiUrl}`);
       const startTime = Date.now();
       
-      // Create a timeout promise
+      // Create a timeout promise with logging
+      let timeoutId: NodeJS.Timeout | null = null;
       const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => {
+        console.log(`Setting up timeout for 25 seconds...`);
+        timeoutId = setTimeout(() => {
+          console.log(`⏰ Timeout triggered after 25 seconds`);
           reject(new Error('Request timeout after 25 seconds'));
         }, 25000);
+        console.log(`Timeout set, ID: ${timeoutId}`);
       });
       
       // Create the fetch promise with error handling
+      console.log(`Creating fetch promise...`);
       const fetchPromise = fetch(apiUrl, {
         headers: {
           'User-Agent': 'bioRxiv-Preview-Bot/1.0',
           'Accept': 'application/json',
         },
-      } as any).catch((fetchErr) => {
+      } as any).then((response) => {
+        console.log(`Fetch promise resolved with response`);
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          console.log(`Cleared timeout`);
+        }
+        return response;
+      }).catch((fetchErr) => {
         console.error(`Fetch promise rejected:`, fetchErr);
         console.error(`Fetch error type: ${fetchErr.name || fetchErr.type || 'Unknown'}`);
         console.error(`Fetch error message: ${fetchErr.message || 'No message'}`);
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          console.log(`Cleared timeout after fetch error`);
+        }
         throw fetchErr;
       });
       
       console.log(`Created fetch and timeout promises, starting race...`);
-      // Race between fetch and timeout
-      const resp = await Promise.race([fetchPromise, timeoutPromise]) as any;
-      const fetchDuration = Date.now() - startTime;
-      console.log(`✅ Fetch completed successfully in ${fetchDuration}ms`);
-      console.log(`API response status: ${resp.status} ${resp.statusText}`);
+      console.log(`Current time: ${new Date().toISOString()}`);
+      
+      // Race between fetch and timeout with explicit error handling
+      let resp: any;
+      try {
+        resp = await Promise.race([fetchPromise, timeoutPromise]) as any;
+        const fetchDuration = Date.now() - startTime;
+        console.log(`✅ Fetch completed successfully in ${fetchDuration}ms`);
+        console.log(`API response status: ${resp.status} ${resp.statusText}`);
+      } catch (raceErr: any) {
+        const fetchDuration = Date.now() - startTime;
+        console.error(`❌ Promise.race failed after ${fetchDuration}ms:`, raceErr);
+        console.error(`Race error type: ${raceErr.name || raceErr.type || 'Unknown'}`);
+        console.error(`Race error message: ${raceErr.message || 'No message'}`);
+        throw raceErr;
+      }
       if (resp.headers) {
         try {
           const headersObj: any = {};
