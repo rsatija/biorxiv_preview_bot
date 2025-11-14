@@ -1,0 +1,8 @@
+{
+  "functions": {
+    "api/slack-events.ts": {
+      "maxDuration": 30
+    }
+  }
+}
+

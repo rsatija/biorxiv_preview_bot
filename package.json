@@ -1,0 +1,18 @@
+{
+  "name": "biorxiv_preview_bot",
+  "version": "1.0.0",
+  "description": "Slack bot that automatically previews bioRxiv and medRxiv preprint links",
+  "main": "api/slack-events.ts",
+  "scripts": {
+    "dev": "vercel dev"
+  },
+  "dependencies": {
+    "@vercel/node": "^3.0.0",
+    "node-fetch": "^2.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}
+
