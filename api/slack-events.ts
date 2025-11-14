@@ -1,9 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import crypto from 'crypto';
-import nodeFetch from 'node-fetch';
-
-// Use native fetch if available (Node 18+), otherwise fall back to node-fetch
-const fetch = (globalThis as any).fetch || nodeFetch;
+import https from 'https';
+import { URL } from 'url';
 
 const SLACK_SIGNING_SECRET = process.env.SLACK_SIGNING_SECRET!;
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN!;
@@ -75,74 +73,66 @@ async function fetchRxivMetadata(server: RxivServer, doi: string, retries = 2): 
   for (let attempt = 0; attempt <= retries; attempt++) {
     console.log(`========== API ATTEMPT ${attempt + 1}/${retries + 1} ==========`);
     try {
-      // Use Promise.race with manual timeout since node-fetch v2 timeout may not work reliably
-      console.log(`Starting fetch request to: ${apiUrl}`);
+      // Use Node's native https module instead of fetch for better reliability
+      console.log(`Starting HTTPS request to: ${apiUrl}`);
       const startTime = Date.now();
+      const urlObj = new URL(apiUrl);
       
-      // Create a timeout promise with logging
-      let timeoutId: NodeJS.Timeout | null = null;
-      const timeoutPromise = new Promise((_, reject) => {
-        console.log(`Setting up timeout for 5 seconds...`);
-        timeoutId = setTimeout(() => {
-          console.log(`⏰ Timeout triggered after 5 seconds`);
+      const resp = await new Promise<any>((resolve, reject) => {
+        console.log(`Making HTTPS request to ${urlObj.hostname}${urlObj.pathname}`);
+        const req = https.get({
+          hostname: urlObj.hostname,
+          path: urlObj.pathname + urlObj.search,
+          headers: {
+            'User-Agent': 'bioRxiv-Preview-Bot/1.0',
+            'Accept': 'application/json',
+          },
+        }, (res) => {
+          clearTimeout(timeoutId);
+          console.log(`✅ HTTPS response received: ${res.statusCode} ${res.statusMessage}`);
+          
+          let data = '';
+          res.on('data', (chunk) => {
+            data += chunk;
+          });
+          
+          res.on('end', () => {
+            const fetchDuration = Date.now() - startTime;
+            console.log(`Response body received (${data.length} bytes) in ${fetchDuration}ms`);
+            
+            // Create a response-like object
+            resolve({
+              status: res.statusCode || 200,
+              statusText: res.statusMessage || 'OK',
+              ok: (res.statusCode || 0) >= 200 && (res.statusCode || 0) < 300,
+              headers: res.headers,
+              text: () => Promise.resolve(data),
+              json: () => Promise.resolve(JSON.parse(data)),
+            });
+          });
+        });
+        
+        req.on('error', (err) => {
+          clearTimeout(timeoutId);
+          console.error(`HTTPS request error:`, err);
+          reject(err);
+        });
+        
+        const timeoutId = setTimeout(() => {
+          req.destroy();
           reject(new Error('Request timeout after 5 seconds'));
         }, 5000);
-        console.log(`Timeout set, ID: ${timeoutId}`);
+        
+        req.setTimeout(5000, () => {
+          req.destroy();
+          clearTimeout(timeoutId);
+          reject(new Error('Request timeout after 5 seconds'));
+        });
       });
       
-      // Create the fetch promise with error handling
-      console.log(`Creating fetch promise...`);
-      const fetchPromise = fetch(apiUrl, {
-        headers: {
-          'User-Agent': 'bioRxiv-Preview-Bot/1.0',
-          'Accept': 'application/json',
-        },
-      } as any).then((response) => {
-        console.log(`Fetch promise resolved with response`);
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-          console.log(`Cleared timeout`);
-        }
-        return response;
-      }).catch((fetchErr) => {
-        console.error(`Fetch promise rejected:`, fetchErr);
-        console.error(`Fetch error type: ${fetchErr.name || fetchErr.type || 'Unknown'}`);
-        console.error(`Fetch error message: ${fetchErr.message || 'No message'}`);
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-          console.log(`Cleared timeout after fetch error`);
-        }
-        throw fetchErr;
-      });
-      
-      console.log(`Created fetch and timeout promises, starting race...`);
-      console.log(`Current time: ${new Date().toISOString()}`);
-      
-      // Race between fetch and timeout with explicit error handling
-      let resp: any;
-      try {
-        resp = await Promise.race([fetchPromise, timeoutPromise]) as any;
-        const fetchDuration = Date.now() - startTime;
-        console.log(`✅ Fetch completed successfully in ${fetchDuration}ms`);
-        console.log(`API response status: ${resp.status} ${resp.statusText}`);
-      } catch (raceErr: any) {
-        const fetchDuration = Date.now() - startTime;
-        console.error(`❌ Promise.race failed after ${fetchDuration}ms:`, raceErr);
-        console.error(`Race error type: ${raceErr.name || raceErr.type || 'Unknown'}`);
-        console.error(`Race error message: ${raceErr.message || 'No message'}`);
-        throw raceErr;
-      }
-      if (resp.headers) {
-        try {
-          const headersObj: any = {};
-          resp.headers.forEach((value: string, key: string) => {
-            headersObj[key] = value;
-          });
-          console.log(`Response headers:`, JSON.stringify(headersObj, null, 2));
-        } catch (e) {
-          console.log(`Could not log response headers:`, e);
-        }
-      }
+      const fetchDuration = Date.now() - startTime;
+      console.log(`✅ Request completed successfully in ${fetchDuration}ms`);
+      console.log(`API response status: ${resp.status} ${resp.statusText}`);
 
       if (!resp.ok) {
         console.error(`Rxiv API error for ${server}, DOI ${doi}: ${resp.status}`);
