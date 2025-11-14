@@ -83,6 +83,7 @@ async function fetchRxivMetadata(server: RxivServer, doi: string, originalUrl: s
           'Accept': 'application/json',
         },
       });
+      console.log(`Call happened here`);
 
       const timeoutPromise = new Promise((_, reject) => {
         setTimeout(() => reject(new Error('Request timeout after 15 seconds')), 15000);
