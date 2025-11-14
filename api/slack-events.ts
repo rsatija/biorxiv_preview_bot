@@ -58,8 +58,16 @@ function extractDoi(url: string): string | null {
 type RxivServer = 'biorxiv' | 'medrxiv';
 
 async function fetchRxivMetadata(server: RxivServer, doi: string, retries = 2): Promise<any> {
-  const apiUrl = `https://api.${server}.org/details/${server}/${encodeURIComponent(doi)}/na/json`;
-  console.log(`Fetching from API: ${apiUrl} (attempt ${3 - retries}/3)`);
+  // DOI should NOT be URL-encoded - use as-is in the path
+  // Format: https://api.biorxiv.org/details/[server]/[DOI]/na/json
+  // Example: https://api.biorxiv.org/details/biorxiv/10.1101/2020.02.19.955666/na/json
+  const apiUrl = `https://api.${server}.org/details/${server}/${doi}/na/json`;
+  console.log(`========== API CALL DETAILS ==========`);
+  console.log(`Server: ${server}`);
+  console.log(`Extracted DOI: ${doi}`);
+  console.log(`Full API URL: ${apiUrl}`);
+  console.log(`Attempt: ${3 - retries}/3`);
+  console.log(`=======================================`);
   
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
@@ -340,7 +348,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         const doi = extractDoi(url);
+        console.log(`${requestId} ========== DOI EXTRACTION ==========`);
+        console.log(`${requestId} Original URL: ${url}`);
         console.log(`${requestId} Extracted DOI: ${doi || 'NONE'}`);
+        console.log(`${requestId} =====================================`);
         if (!doi) {
           console.log(`${requestId} Could not extract DOI from URL: ${url}`);
           continue;
