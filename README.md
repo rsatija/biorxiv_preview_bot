@@ -119,12 +119,63 @@ This will start a local server. You'll need to use a tool like [ngrok](https://n
 
 ## Troubleshooting
 
-- **Bot not responding**: 
+### No Logs Appearing (Slack Not Calling Your Endpoint)
+
+If you post a link but see **no logs at all** in Vercel, Slack isn't calling your endpoint. Check these in order:
+
+1. **Verify Endpoint is Reachable**
+   - Visit `https://your-project.vercel.app/api/slack-events` in your browser
+   - You should see a JSON response with environment variable status
+   - If you get an error, the deployment may have failed
+
+2. **Check Slack Event Subscriptions Configuration**
+   - Go to your Slack app → **Event Subscriptions**
+   - Verify **Enable Events** is toggled **ON** (green)
+   - Check the **Request URL** shows a green checkmark ✅
+   - If there's a red X, click "Reinstall App" or verify the URL is correct
+   - The URL must be exactly: `https://your-project.vercel.app/api/slack-events`
+
+3. **Verify Bot Events Subscription**
+   - In Event Subscriptions, scroll to **Subscribe to bot events**
+   - Ensure `link_shared` is listed (if not, add it and save)
+   - This is the #1 reason events don't fire!
+
+4. **Check Bot is in Channel**
+   - The bot must be **invited to the channel** where you're posting
+   - Type `/invite @YourBotName` in the channel
+   - Or add the bot through channel settings → Integrations
+
+5. **Check Slack's Event Delivery Status**
+   - In Event Subscriptions, scroll down to see recent event deliveries
+   - Look for any failed deliveries or errors
+   - If you see failures, check the error message
+
+6. **Verify Bot Token Scopes**
+   - Go to **OAuth & Permissions**
+   - Ensure `chat:write` scope is added
+   - If you added scopes after installation, click **Reinstall to Workspace**
+
+7. **Test with a Direct Message**
+   - Try posting a bioRxiv link in a DM with the bot
+   - This helps isolate channel permission issues
+
+### Other Issues
+
+- **Bot not responding** (but logs show events): 
   - Check that the bot is invited to the channel
-  - **Verify `link_shared` event is subscribed** in Event Subscriptions → Subscribe to bot events
-- **Signature verification failed**: Verify `SLACK_SIGNING_SECRET` is correct
-- **No preview posted**: 
+  - Verify `link_shared` event is subscribed
+  - Check Vercel logs for API errors
+
+- **Signature verification failed**: 
+  - Verify `SLACK_SIGNING_SECRET` environment variable is set correctly in Vercel
+  - Make sure there are no extra spaces when copying the secret
+
+- **No preview posted** (but handler is called): 
   - Check Vercel function logs for errors
   - Ensure `link_shared` bot event is subscribed (most common issue!)
-- **URL verification failed**: Ensure the Request URL in Slack matches your Vercel deployment URL exactly
+  - Verify the link is a valid bioRxiv/medRxiv URL with a DOI
+
+- **URL verification failed**: 
+  - Ensure the Request URL in Slack matches your Vercel deployment URL exactly
+  - No trailing slashes, correct protocol (https), correct path
 

@@ -169,15 +169,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const requestId = `[${new Date().toISOString()}]`;
   console.log(`${requestId} ========== Handler called ==========`);
   console.log(`${requestId} Method: ${req.method}`);
+  console.log(`${requestId} URL: ${req.url}`);
   console.log(`${requestId} Headers:`, {
     'x-slack-request-timestamp': req.headers['x-slack-request-timestamp'],
     'x-slack-signature': req.headers['x-slack-signature'] ? 'present' : 'missing',
     'content-type': req.headers['content-type'],
+    'user-agent': req.headers['user-agent'],
   });
+
+  // Health check endpoint (GET request)
+  if (req.method === 'GET') {
+    console.log(`${requestId} Health check request received`);
+    const healthInfo = {
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      environment: {
+        SLACK_SIGNING_SECRET: SLACK_SIGNING_SECRET ? 'SET' : 'MISSING',
+        SLACK_BOT_TOKEN: SLACK_BOT_TOKEN ? 'SET' : 'MISSING',
+        PAPERS_CHANNEL_ID: PAPERS_CHANNEL_ID || 'NOT SET',
+      },
+      message: 'Slack Events API handler is running. This endpoint expects POST requests from Slack.',
+    };
+    console.log(`${requestId} Health check response:`, JSON.stringify(healthInfo, null, 2));
+    res.status(200).json(healthInfo);
+    return;
+  }
 
   // Slack sends POST
   if (req.method !== 'POST') {
-    console.log(`${requestId} Non-POST request, returning OK`);
+    console.log(`${requestId} Non-POST request (${req.method}), returning OK`);
     res.status(200).send('OK');
     return;
   }
