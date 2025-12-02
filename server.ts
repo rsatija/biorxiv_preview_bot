@@ -567,7 +567,8 @@ app.get('/api/test-fetch', async (req, res) => {
   }
 });
 
-app.listen(PORT, '0.0.0.0', () => {
+// Listen on :: (IPv6) for Railway compatibility, which binds to both IPv4 and IPv6
+app.listen(PORT, '::', () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`Environment check:`);
   console.log(`  SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET ? 'SET' : 'MISSING'}`);
