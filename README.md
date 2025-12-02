@@ -30,6 +30,8 @@ A Slack bot that automatically detects and previews bioRxiv and medRxiv preprint
 3. Add the following domains:
    - `biorxiv.org`
    - `medrxiv.org`
+   - `cell.com`
+   - `sciencedirect.com`
 4. **After adding domains, you MUST reinstall the app**:
    - Go to **OAuth & Permissions**
    - Click **Reinstall to Workspace**
