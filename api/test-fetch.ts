@@ -36,7 +36,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   log(`Original URL: ${testUrl}`);
 
   let apiUrl: string;
-  let startTime: number;
+  let startTime: number = 0;
 
   try {
     // Extract DOI
