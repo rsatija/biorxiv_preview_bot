@@ -12,7 +12,7 @@
     "resolveJsonModule": true,
     "moduleResolution": "node"
   },
-  "include": ["api/**/*"],
+  "include": ["api/**/*", "server.ts"],
   "exclude": ["node_modules"]
 }
 
