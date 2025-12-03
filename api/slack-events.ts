@@ -329,25 +329,36 @@ async function fetchRxivMetadata(server: RxivServer, doi: string, originalUrl: s
       console.log('Debug 1')
       // Test if exec works
       try {
-        const { stdout } = await execAsync('echo "test"', { timeout: 1000 });
-        console.log('exec works:', stdout);
+        const { stdout: echoOutput } = await execAsync('echo "test"', { timeout: 1000 });
+        console.log('exec works:', echoOutput);
       } catch (err) {
         console.error('exec failed:', err);
       }
       try {
-        const { stdout } = await execAsync('curl --version', { timeout: 2000 });
-        console.log('curl version:', stdout);
+        const { stdout: curlVersion } = await execAsync('curl --version', { timeout: 2000 });
+        console.log('curl version:', curlVersion);
       } catch (err) {
         console.error('curl not found:', err);
       }
       try {
-        const { stdout } = await execAsync('which curl', { timeout: 2000 });
-        console.log('curl location:', stdout);
+        const { stdout: curlPath } = await execAsync('which curl', { timeout: 2000 });
+        console.log('curl location:', curlPath);
       } catch (err) {
         console.error('curl not in PATH:', err);
       }
-      const { stdout } = await execAsync('ls -la', { timeout: 2000 });
-      console.log('ls output:', stdout);
+      try {
+        const { stdout: lsOutput } = await execAsync('ls -la', { timeout: 2000 });
+        console.log('ls output:', lsOutput);
+      } catch (err) {
+        console.error('ls failed:', err);
+      }
+      // Test simple curl to google.com
+      try {
+        const { stdout: googleOutput } = await execAsync('curl -s --max-time 3 https://www.google.com', { timeout: 4000 });
+        console.log('curl to google.com works, response length:', googleOutput?.length || 0);
+      } catch (err) {
+        console.error('curl to google.com failed:', err);
+      }
       const { stdout, stderr } = await execAsync(curlCommand, {
         timeout: 6000, // 6 second timeout (slightly longer than curl's max-time)
       });
