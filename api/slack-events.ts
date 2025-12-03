@@ -448,6 +448,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         console.log(`${requestId} =====================================`);
         if (!doi) {
           console.log(`${requestId} Could not extract DOI from URL: ${url}`);
+          console.log(`${requestId} ========== POSTING ERROR TO SLACK ==========`);
+          console.log(`${requestId} Channel: ${channel}`);
+          console.log(`${requestId} URL: ${url}`);
+          console.log(`${requestId} Server: ${server}`);
+          try {
+            await postErrorToSlack(channel, url, server);
+            console.log(`${requestId} ✅ Successfully posted error message to Slack`);
+          } catch (slackErr) {
+            console.error(`${requestId} ❌ Error posting error message to Slack:`, slackErr);
+            console.error(`${requestId} Error stack:`, slackErr instanceof Error ? slackErr.stack : 'No stack trace');
+          }
+          console.log(`${requestId} ===========================================`);
           continue;
         }
 
