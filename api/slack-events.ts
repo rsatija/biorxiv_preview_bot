@@ -140,44 +140,92 @@ function extractPII(url: string): string | null {
 
 // PubMed API: Step 1 - ESearch to find PMID from PII
 async function pubmedESearch(pii: string, retries = 2): Promise<string | null> {
-  const esearchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(pii)}[PII]&retmode=json`;
+  // Try multiple PII formats for PubMed search
+  // ScienceDirect PIIs are typically S followed by 4 digits, then 4 digits, then variable length
+  // Example: S0092867424006457 -> S0092-8674-24006457 or S0092-8674-2400645-7
+  const piiFormats: string[] = [pii]; // Original format: S0092867424006457
   
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      console.log(`PubMed ESearch attempt ${attempt + 1}/${retries + 1}: ${esearchUrl}`);
-      const resp = await fetch(esearchUrl, {
-        headers: {
-          'User-Agent': 'bioRxiv-Preview-Bot/1.0',
-          'Accept': 'application/json',
-        },
-      });
-      
-      if (!resp.ok) {
-        if (resp.status >= 500 && attempt < retries) {
+  // Try adding dashes in common formats
+  if (pii.match(/^S\d{4}\d{4}\d+$/)) {
+    // Format: S0092867424006457 -> S0092-8674-24006457
+    piiFormats.push(pii.replace(/^S(\d{4})(\d{4})(\d+)$/, 'S$1-$2-$3'));
+    // Also try: S0092-8674-2400645-7 (if last part is long, split it)
+    if (pii.length > 13) {
+      const match = pii.match(/^S(\d{4})(\d{4})(\d+)$/);
+      if (match && match[3].length > 1) {
+        const lastPart = match[3];
+        piiFormats.push(`S${match[1]}-${match[2]}-${lastPart.slice(0, -1)}-${lastPart.slice(-1)}`);
+      }
+    }
+  }
+  
+  // Remove duplicates
+  const uniqueFormats = [...new Set(piiFormats)];
+  
+  for (const piiFormat of uniqueFormats) {
+    const esearchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(piiFormat)}[PII]&retmode=json`;
+    
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        console.log(`PubMed ESearch attempt ${attempt + 1}/${retries + 1} with PII format: ${piiFormat}`);
+        console.log(`URL: ${esearchUrl}`);
+        const resp = await fetch(esearchUrl, {
+          headers: {
+            'User-Agent': 'bioRxiv-Preview-Bot/1.0',
+            'Accept': 'application/json',
+          },
+        });
+        
+        if (!resp.ok) {
+          if (resp.status >= 500 && attempt < retries) {
+            await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+            continue;
+          }
+          console.error(`PubMed ESearch error: ${resp.status}`);
+          continue; // Try next format
+        }
+        
+        const json: any = await resp.json();
+        const idList = json?.esearchresult?.idlist;
+        if (Array.isArray(idList) && idList.length > 0) {
+          console.log(`Found PMID: ${idList[0]} using PII format: ${piiFormat}`);
+          return idList[0];
+        }
+        console.log(`No PMID found for PII format: ${piiFormat}`);
+      } catch (err: any) {
+        console.error(`PubMed ESearch error for format ${piiFormat}:`, err);
+        if (attempt < retries) {
           await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
           continue;
         }
-        console.error(`PubMed ESearch error: ${resp.status}`);
-        return null;
       }
-      
+    }
+  }
+  
+  // If no PMID found with [PII] tag, try searching without the tag as a fallback
+  console.log(`Trying fallback search without [PII] tag for: ${pii}`);
+  const fallbackUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(pii)}&retmode=json`;
+  try {
+    const resp = await fetch(fallbackUrl, {
+      headers: {
+        'User-Agent': 'bioRxiv-Preview-Bot/1.0',
+        'Accept': 'application/json',
+      },
+    });
+    
+    if (resp.ok) {
       const json: any = await resp.json();
       const idList = json?.esearchresult?.idlist;
       if (Array.isArray(idList) && idList.length > 0) {
-        console.log(`Found PMID: ${idList[0]}`);
+        console.log(`Found PMID with fallback search: ${idList[0]}`);
         return idList[0];
       }
-      console.log(`No PMID found for PII: ${pii}`);
-      return null;
-    } catch (err: any) {
-      console.error(`PubMed ESearch error:`, err);
-      if (attempt < retries) {
-        await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
-        continue;
-      }
-      return null;
     }
+  } catch (err) {
+    console.error(`Fallback search error:`, err);
   }
+  
+  console.log(`No PMID found for any PII format. Tried: ${uniqueFormats.join(', ')}`);
   return null;
 }
 
