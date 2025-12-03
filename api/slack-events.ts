@@ -308,6 +308,99 @@ function parsePubMedXML(xmlText: string): any {
   }
 }
 
+// Fetch DOI from Elsevier API using PII
+async function fetchDoiFromElsevier(pii: string, retries = 2): Promise<string | null> {
+  const elsevierUrl = `https://api.elsevier.com/content/article/pii/${pii}`;
+  
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      console.log(`Elsevier API attempt ${attempt + 1}/${retries + 1}: ${elsevierUrl}`);
+      const resp = await fetch(elsevierUrl, {
+        headers: {
+          'User-Agent': 'bioRxiv-Preview-Bot/1.0',
+          'Accept': 'application/xml',
+        },
+      });
+      
+      if (!resp.ok) {
+        if (resp.status >= 500 && attempt < retries) {
+          await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+          continue;
+        }
+        console.error(`Elsevier API error: ${resp.status}`);
+        return null;
+      }
+      
+      const xmlText = await resp.text();
+      
+      // Parse DOI from XML response
+      // Look for <prism:doi> or <dc:identifier> with doi: prefix
+      const doiMatch = xmlText.match(/<prism:doi>([^<]+)<\/prism:doi>/) || 
+                       xmlText.match(/<dc:identifier>doi:([^<]+)<\/dc:identifier>/);
+      
+      if (doiMatch) {
+        const doi = doiMatch[1];
+        console.log(`Found DOI from Elsevier API: ${doi}`);
+        return doi;
+      }
+      
+      console.log(`No DOI found in Elsevier API response`);
+      return null;
+    } catch (err: any) {
+      console.error(`Elsevier API error:`, err);
+      if (attempt < retries) {
+        await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+        continue;
+      }
+      return null;
+    }
+  }
+  return null;
+}
+
+// Search PubMed using DOI instead of PII
+async function pubmedESearchByDoi(doi: string, retries = 2): Promise<string | null> {
+  const esearchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(doi)}[DOI]&retmode=json`;
+  
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      console.log(`PubMed ESearch by DOI attempt ${attempt + 1}/${retries + 1}: ${esearchUrl}`);
+      const resp = await fetch(esearchUrl, {
+        headers: {
+          'User-Agent': 'bioRxiv-Preview-Bot/1.0',
+          'Accept': 'application/json',
+        },
+      });
+      
+      if (!resp.ok) {
+        if (resp.status >= 500 && attempt < retries) {
+          await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+          continue;
+        }
+        console.error(`PubMed ESearch error: ${resp.status}`);
+        return null;
+      }
+      
+      const json: any = await resp.json();
+      const idList = json?.esearchresult?.idlist;
+      if (Array.isArray(idList) && idList.length > 0) {
+        console.log(`Found PMID: ${idList[0]} using DOI: ${doi}`);
+        return idList[0];
+      }
+      console.log(`No PMID found for DOI: ${doi}`);
+      return null;
+    } catch (err: any) {
+      console.error(`PubMed ESearch error:`, err);
+      if (attempt < retries) {
+        await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+        continue;
+      }
+      return null;
+    }
+  }
+  return null;
+}
+
 // Fetch metadata for Cell.com or ScienceDirect articles using PubMed API
 async function fetchCellScienceDirectMetadata(url: string, retries = 2): Promise<any> {
   console.log(`========== CELL/SCIENCEDIRECT METADATA EXTRACTION ==========`);
@@ -321,16 +414,46 @@ async function fetchCellScienceDirectMetadata(url: string, retries = 2): Promise
   }
   console.log(`Extracted PII: ${pii}`);
   
-  // Step 2: ESearch to find PMID
-  const pmid = await pubmedESearch(pii, retries);
+  // Step 2: Convert PII to DOI using Elsevier API
+  const doi = await fetchDoiFromElsevier(pii, retries);
+  if (!doi) {
+    console.error(`Could not get DOI from Elsevier API for PII: ${pii}`);
+    // Fallback: try original PII-based PubMed search
+    console.log(`Falling back to PII-based PubMed search`);
+    const pmid = await pubmedESearch(pii, retries);
+    if (!pmid) {
+      console.error(`Could not find PMID for PII: ${pii}`);
+      return null;
+    }
+    console.log(`Found PMID: ${pmid}`);
+    
+    // Step 3: EFetch to get full metadata
+    const metadata = await pubmedEFetch(pmid, retries);
+    if (!metadata) {
+      console.error(`Could not fetch metadata for PMID: ${pmid}`);
+      return null;
+    }
+    
+    console.log(`========== METADATA EXTRACTED SUCCESSFULLY ==========`);
+    console.log(`Title: ${metadata.title?.substring(0, 100) || 'N/A'}...`);
+    console.log(`Authors: ${metadata.authors?.substring(0, 100) || 'N/A'}...`);
+    console.log(`Abstract length: ${metadata.abstract?.length || 0} chars`);
+    console.log(`DOI: ${metadata.doi || 'N/A'}`);
+    console.log(`=====================================================`);
+    
+    return metadata;
+  }
+  console.log(`Converted PII to DOI: ${doi}`);
+  
+  // Step 3: Search PubMed using DOI (more reliable than PII)
+  const pmid = await pubmedESearchByDoi(doi, retries);
   if (!pmid) {
-    console.error(`Could not find PMID for PII: ${pii}`);
-    // Fallback to HTML scraping could go here
+    console.error(`Could not find PMID for DOI: ${doi}`);
     return null;
   }
   console.log(`Found PMID: ${pmid}`);
   
-  // Step 3: EFetch to get full metadata
+  // Step 4: EFetch to get full metadata
   const metadata = await pubmedEFetch(pmid, retries);
   if (!metadata) {
     console.error(`Could not fetch metadata for PMID: ${pmid}`);
