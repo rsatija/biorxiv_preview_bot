@@ -300,33 +300,33 @@ async function fetchCellScienceDirectMetadata(url: string, retries = 2): Promise
 }
 
 async function fetchRxivMetadata(server: RxivServer, doi: string, originalUrl: string, retries = 2): Promise<any> {
-  // Direct API call (no proxy needed)
-  const apiUrl = `https://api.${server}.org/details/${server}/${doi}/na/json`;
+  // Use the working test-fetch endpoint as a proxy to avoid fetch issues
+  // Always use the production URL
+  const baseUrl = 'https://biorxiv-preview-bot.vercel.app';
+  const testFetchUrl = `${baseUrl}/api/test-fetch?url=${encodeURIComponent(originalUrl)}`;
   
   console.log(`========== API CALL DETAILS ==========`);
   console.log(`Server: ${server}`);
   console.log(`Extracted DOI: ${doi}`);
   console.log(`Original URL: ${originalUrl}`);
-  console.log(`API URL: ${apiUrl}`);
+  console.log(`Test-fetch endpoint: ${testFetchUrl}`);
   console.log(`=======================================`);
   
   for (let attempt = 0; attempt <= retries; attempt++) {
     console.log(`========== API ATTEMPT ${attempt + 1}/${retries + 1} ==========`);
     try {
       const startTime = Date.now();
-      console.log(`Calling API: ${apiUrl}`);
+      console.log(`Calling test-fetch endpoint: ${testFetchUrl}`);
 
-      const resp = await fetch(apiUrl, {
-        headers: {
-          'User-Agent': 'bioRxiv-Preview-Bot/1.0',
-          'Accept': 'application/json',
-        },
+      const resp = await fetch(testFetchUrl, {
+        headers: { 'Accept': 'application/json' },
       });
       
       if (!resp.ok) {
-        console.error(`API error: ${resp.status}`);
+        console.error(`Test-fetch endpoint error: ${resp.status}`);
         if (resp.status >= 500 && attempt < retries) {
-          const delay = Math.pow(2, attempt) * 1000;
+          // Retry on server errors
+          const delay = Math.pow(2, attempt) * 1000; // Exponential backoff: 1s, 2s, 4s
           console.log(`Server error, retrying in ${delay}ms...`);
           await new Promise(resolve => setTimeout(resolve, delay));
           continue;
@@ -340,21 +340,17 @@ async function fetchRxivMetadata(server: RxivServer, doi: string, originalUrl: s
       const json: any = await resp.json();
       console.log(`JSON parsed successfully`);
       
-      const collection = json?.collection;
-      if (!Array.isArray(collection) || collection.length === 0) {
-        console.error(`No collection in API response`);
+      if (!json.success) {
+        console.error(`Test-fetch returned error:`, json.error || 'Unknown error');
         return null;
       }
 
-      const entry = collection[0];
-      const metadata = {
-        title: (entry.title || '').trim(),
-        authors: (entry.authors || '').trim(),
-        abstract: (entry.abstract || '').trim(),
-        date: entry.date,
-        category: entry.category,
-        version: entry.version,
-      };
+      // Extract metadata from the test-fetch response format
+      const metadata = json.metadata;
+      if (!metadata) {
+        console.error(`No metadata in test-fetch response`);
+        return null;
+      }
 
       console.log(`========== METADATA EXTRACTED SUCCESSFULLY ==========`);
       console.log(`Title: ${metadata.title?.substring(0, 100) || 'N/A'}...`);
@@ -380,7 +376,7 @@ async function fetchRxivMetadata(server: RxivServer, doi: string, originalUrl: s
       console.error(`=====================================`);
       
       if ((isTimeout || isNetworkError) && attempt < retries) {
-        const delay = Math.pow(2, attempt) * 1000;
+        const delay = Math.pow(2, attempt) * 1000; // Exponential backoff: 1s, 2s, 4s
         console.log(`Network error/timeout, retrying in ${delay}ms...`);
         await new Promise(resolve => setTimeout(resolve, delay));
         continue;
