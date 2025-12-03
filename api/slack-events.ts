@@ -323,11 +323,12 @@ async function fetchRxivMetadata(server: RxivServer, doi: string, originalUrl: s
       console.log(`Calling test-fetch endpoint with curl: ${testFetchUrl}`);
 
       // Use curl instead of fetch to bypass Vercel blocking
-      const curlCommand = `curl -s -H "Accept: application/json" "${testFetchUrl}"`;
+      // Add --max-time flag to curl to prevent hanging
+      const curlCommand = `curl -s --max-time 5 -H "Accept: application/json" "${testFetchUrl}"`;
       console.log(`Executing curl command: ${curlCommand}`);
       
       const { stdout, stderr } = await execAsync(curlCommand, {
-        timeout: 500, // 30 second timeout
+        timeout: 6000, // 6 second timeout (slightly longer than curl's max-time)
       });
       
       if (stderr) {
