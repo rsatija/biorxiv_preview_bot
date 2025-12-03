@@ -6,6 +6,31 @@ const SLACK_SIGNING_SECRET = process.env.SLACK_SIGNING_SECRET!;
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN!;
 const PAPERS_CHANNEL_ID = process.env.PAPERS_CHANNEL_ID; // optional
 
+// Cache bot user ID to avoid infinite loops
+let BOT_USER_ID: string | null = null;
+
+// Fetch bot user ID on startup
+async function getBotUserId(): Promise<string | null> {
+  if (BOT_USER_ID) return BOT_USER_ID;
+  
+  try {
+    const resp = await fetch('https://slack.com/api/auth.test', {
+      headers: {
+        Authorization: `Bearer ${SLACK_BOT_TOKEN}`,
+      },
+    });
+    const data = await resp.json();
+    if (data.ok && data.user_id) {
+      BOT_USER_ID = data.user_id;
+      console.log(`Bot user ID: ${BOT_USER_ID}`);
+      return BOT_USER_ID;
+    }
+  } catch (err) {
+    console.error('Failed to fetch bot user ID:', err);
+  }
+  return null;
+}
+
 // Regex: Matches bioRxiv DOI in two formats:
 // 1. 10.XXXXX/YYYY.MM.DD.number (with DOI prefix)
 // 2. YYYY.MM.DD.number (direct format in URL path)
@@ -407,11 +432,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.log(`${requestId} ========== LINK SHARED EVENT ==========`);
       const channel = event.channel as string;
       const links = event.links as { domain: string; url: string }[];
+      const userId = event.user as string | undefined;
+      const botId = event.bot_id as string | undefined;
       
       console.log(`${requestId} Channel: ${channel}`);
+      console.log(`${requestId} User ID: ${userId || 'N/A'}`);
+      console.log(`${requestId} Bot ID: ${botId || 'N/A'}`);
       console.log(`${requestId} Channel ID from env: ${PAPERS_CHANNEL_ID || 'NOT SET (all channels allowed)'}`);
       console.log(`${requestId} Number of links: ${links?.length || 0}`);
       console.log(`${requestId} Links:`, JSON.stringify(links, null, 2));
+
+      // Prevent infinite loop: ignore links shared by bots (including ourselves)
+      if (botId) {
+        console.log(`${requestId} Link was shared by a bot (bot_id: ${botId}), ignoring to prevent loop`);
+        res.status(200).send('Ignored (shared by bot)');
+        return;
+      }
+
+      // Also check if it was shared by our bot user
+      const botUserId = await getBotUserId();
+      if (botUserId && userId === botUserId) {
+        console.log(`${requestId} Link was shared by our bot (user_id: ${userId}), ignoring to prevent loop`);
+        res.status(200).send('Ignored (shared by our bot)');
+        return;
+      }
 
       // Optional: restrict to #papers only
       if (PAPERS_CHANNEL_ID && channel !== PAPERS_CHANNEL_ID) {
@@ -420,9 +464,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return;
       }
 
+      // Fire-and-forget processing; respond quickly to Slack
+      console.log(`${requestId} Sending OK response to Slack, processing links asynchronously...`);
+      res.status(200).send('OK');
+
       if (!links || links.length === 0) {
         console.log(`${requestId} No links found in event`);
-        res.status(200).send('OK');
         return;
       }
 
@@ -520,7 +567,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       console.log(`${requestId} ========== Finished processing link_shared event ==========`);
-      res.status(200).send('OK');
       return;
     } else {
       console.log(`${requestId} Event type '${event?.type}' is not 'link_shared', ignoring`);
