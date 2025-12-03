@@ -43,8 +43,9 @@ async function getBotUserId(): Promise<string | null> {
   return null;
 }
 
-// Regex: 10.1101/YYYY.MM.DD.number (optionally followed by vN)
-const DOI_RE = /(10\.1101\/\d{4}\.\d{2}\.\d{2}\.\d+)(?:v\d+)?/;
+// Regex: 10.XXXXX/YYYY.MM.DD.number (optionally followed by vN)
+// Matches any DOI prefix starting with 10. (e.g., 10.1101, 10.64898, etc.)
+const DOI_RE = /(10\.\d+\/\d{4}\.\d{2}\.\d{2}\.\d+)(?:v\d+)?/;
 
 // PII extraction regexes for Cell.com and ScienceDirect
 const CELL_PII_PATTERNS = [
