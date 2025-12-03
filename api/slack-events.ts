@@ -152,6 +152,71 @@ async function fetchRxivMetadata(server: RxivServer, doi: string, originalUrl: s
   return null;
 }
 
+async function postErrorToSlack(channel: string, url: string, server: RxivServer) {
+  const label = server === 'biorxiv' ? 'bioRxiv' : 'medRxiv';
+
+  const body = {
+    channel,
+    blocks: [
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `*${label} link detected but failed to fetch metadata* :warning:\n<${url}|*${url}*>`,
+        },
+      },
+      {
+        type: 'context',
+        elements: [
+          {
+            type: 'mrkdwn',
+            text: `Unable to retrieve paper information. The link may be invalid or the API may be temporarily unavailable.`,
+          },
+        ],
+      },
+    ],
+  };
+
+  console.log(`========== SLACK ERROR POST DETAILS ==========`);
+  console.log(`Channel: ${channel}`);
+  console.log(`Server: ${server}`);
+  console.log(`URL: ${url}`);
+  console.log(`SLACK_BOT_TOKEN present: ${SLACK_BOT_TOKEN ? 'YES' : 'NO'}`);
+  console.log(`Request body size: ${JSON.stringify(body).length} bytes`);
+  console.log(`===============================================`);
+  
+  console.log(`Sending POST request to Slack API...`);
+  const startTime = Date.now();
+  const resp = await fetch('https://slack.com/api/chat.postMessage', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${SLACK_BOT_TOKEN}`,
+      'Content-Type': 'application/json; charset=utf-8',
+    },
+    body: JSON.stringify(body),
+  });
+  const fetchDuration = Date.now() - startTime;
+  console.log(`Slack API request completed in ${fetchDuration}ms`);
+  console.log(`Slack API response status: ${resp.status} ${resp.statusText}`);
+  
+  const data = await resp.json();
+  console.log(`========== SLACK API RESPONSE ==========`);
+  console.log(`Response OK: ${data.ok}`);
+  console.log(`Full response:`, JSON.stringify(data, null, 2));
+  console.log(`========================================`);
+  
+  if (!data.ok) {
+    console.error('❌ Slack chat.postMessage error:', data);
+    console.error(`Error code: ${data.error || 'Unknown error'}`);
+    console.error(`Error description: ${data.error_description || 'N/A'}`);
+    throw new Error(`Slack API error: ${data.error || 'Unknown error'}`);
+  } else {
+    console.log(`✅ Successfully posted error message to Slack`);
+    console.log(`Message timestamp: ${data.ts || 'N/A'}`);
+    console.log(`Channel: ${data.channel || 'N/A'}`);
+  }
+}
+
 async function postToSlack(channel: string, url: string, meta: any, server: RxivServer) {
   const title = meta.title || '(No title)';
   const authors = meta.authors || '(No authors listed)';
@@ -391,6 +456,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const meta = await fetchRxivMetadata(server, doi, url);
           if (!meta) {
             console.log(`${requestId} No metadata returned for ${server} DOI ${doi}`);
+            console.log(`${requestId} ========== POSTING ERROR TO SLACK ==========`);
+            console.log(`${requestId} Channel: ${channel}`);
+            console.log(`${requestId} URL: ${url}`);
+            console.log(`${requestId} Server: ${server}`);
+            try {
+              await postErrorToSlack(channel, url, server);
+              console.log(`${requestId} ✅ Successfully posted error message to Slack`);
+            } catch (slackErr) {
+              console.error(`${requestId} ❌ Error posting error message to Slack:`, slackErr);
+              console.error(`${requestId} Error stack:`, slackErr instanceof Error ? slackErr.stack : 'No stack trace');
+            }
+            console.log(`${requestId} ===========================================`);
             continue;
           }
           console.log(`${requestId} ========== METADATA RETRIEVED ==========`);
