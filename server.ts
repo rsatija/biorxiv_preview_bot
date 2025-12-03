@@ -43,9 +43,12 @@ async function getBotUserId(): Promise<string | null> {
   return null;
 }
 
-// Regex: 10.XXXXX/YYYY.MM.DD.number (optionally followed by vN)
-// Matches any DOI prefix starting with 10. (e.g., 10.1101, 10.64898, etc.)
-const DOI_RE = /(10\.\d+\/\d{4}\.\d{2}\.\d{2}\.\d+)(?:v\d+)?/;
+// Regex: Matches bioRxiv DOI in two formats:
+// 1. 10.XXXXX/YYYY.MM.DD.number (with DOI prefix)
+// 2. YYYY.MM.DD.number (direct format in URL path)
+// Both optionally followed by vN version suffix
+// Returns YYYY.MM.DD.number (without prefix or version)
+const DOI_RE = /(?:10\.\d+\/)?(\d{4}\.\d{2}\.\d{2}\.\d+)(?:v\d+)?/;
 
 // PII extraction regexes for Cell.com and ScienceDirect
 const CELL_PII_PATTERNS = [

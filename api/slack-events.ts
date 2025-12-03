@@ -6,9 +6,12 @@ const SLACK_SIGNING_SECRET = process.env.SLACK_SIGNING_SECRET!;
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN!;
 const PAPERS_CHANNEL_ID = process.env.PAPERS_CHANNEL_ID; // optional
 
-// Regex: 10.XXXXX/YYYY.MM.DD.number (optionally followed by vN)
-// Matches any DOI prefix starting with 10. (e.g., 10.1101, 10.64898, etc.)
-const DOI_RE = /(10\.\d+\/\d{4}\.\d{2}\.\d{2}\.\d+)(?:v\d+)?/;
+// Regex: Matches bioRxiv DOI in two formats:
+// 1. 10.XXXXX/YYYY.MM.DD.number (with DOI prefix)
+// 2. YYYY.MM.DD.number (direct format in URL path)
+// Both optionally followed by vN version suffix
+// Returns YYYY.MM.DD.number (without prefix or version)
+const DOI_RE = /(?:10\.\d+\/)?(\d{4}\.\d{2}\.\d{2}\.\d+)(?:v\d+)?/;
 
 // Verify Slack signature
 function verifySlackRequest(req: VercelRequest, rawBody: string): boolean {
