@@ -327,7 +327,7 @@ async function fetchRxivMetadata(server: RxivServer, doi: string, originalUrl: s
       console.log(`Executing curl command: ${curlCommand}`);
       
       const { stdout, stderr } = await execAsync(curlCommand, {
-        timeout: 30000, // 30 second timeout
+        timeout: 500, // 30 second timeout
       });
       
       if (stderr) {
