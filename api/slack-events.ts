@@ -39,6 +39,19 @@ async function getBotUserId(): Promise<string | null> {
 const DOI_RE_WITH_PREFIX = /(10\.\d+)\/(\d{4}\.\d{2}\.\d{2}\.\d+)(?:v\d+)?/;
 const DOI_RE_WITHOUT_PREFIX = /(\d{4}\.\d{2}\.\d{2}\.\d+)(?:v\d+)?/;
 
+// PII extraction regexes for Cell.com and ScienceDirect
+const CELL_PII_PATTERNS = [
+  /S\d{4}\(\d{2}\)\d+-[\dX]/,  // S0092-8674(24)01234-5
+  /S\d{4}\(\d{4}\)\d+-[\dX]/,  // S0092-8674(2024)01234-5
+];
+
+const SCIENCEDIRECT_PII_PATTERNS = [
+  /pii\/(S\d{4}\d{10,})/,  // pii/S0092867424012345
+  /\/article\/pii\/(S\d{4}\d{10,})/,  // /article/pii/S0092867424012345
+];
+
+const GENERIC_PII_PATTERN = /(S\d{4}[\d()X-]+)/;
+
 // Verify Slack signature
 function verifySlackRequest(req: VercelRequest, rawBody: string): boolean {
   const timestamp = req.headers['x-slack-request-timestamp'] as string | undefined;
@@ -96,6 +109,195 @@ function extractDoi(url: string): string | null {
 }
 
 type RxivServer = 'biorxiv' | 'medrxiv';
+type ArticleSource = RxivServer | 'cell' | 'sciencedirect';
+
+// Extract PII from Cell.com or ScienceDirect URLs
+function extractPII(url: string): string | null {
+  // Try Cell.com patterns first
+  for (const pattern of CELL_PII_PATTERNS) {
+    const match = pattern.exec(url);
+    if (match) {
+      return match[0];
+    }
+  }
+  
+  // Try ScienceDirect patterns
+  for (const pattern of SCIENCEDIRECT_PII_PATTERNS) {
+    const match = pattern.exec(url);
+    if (match) {
+      return match[1] || match[0]; // Return captured group if available
+    }
+  }
+  
+  // Generic fallback
+  const genericMatch = GENERIC_PII_PATTERN.exec(url);
+  if (genericMatch) {
+    return genericMatch[1];
+  }
+  
+  return null;
+}
+
+// PubMed API: Step 1 - ESearch to find PMID from PII
+async function pubmedESearch(pii: string, retries = 2): Promise<string | null> {
+  const esearchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(pii)}[PII]&retmode=json`;
+  
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      console.log(`PubMed ESearch attempt ${attempt + 1}/${retries + 1}: ${esearchUrl}`);
+      const resp = await fetch(esearchUrl, {
+        headers: {
+          'User-Agent': 'bioRxiv-Preview-Bot/1.0',
+          'Accept': 'application/json',
+        },
+      });
+      
+      if (!resp.ok) {
+        if (resp.status >= 500 && attempt < retries) {
+          await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+          continue;
+        }
+        console.error(`PubMed ESearch error: ${resp.status}`);
+        return null;
+      }
+      
+      const json: any = await resp.json();
+      const idList = json?.esearchresult?.idlist;
+      if (Array.isArray(idList) && idList.length > 0) {
+        console.log(`Found PMID: ${idList[0]}`);
+        return idList[0];
+      }
+      console.log(`No PMID found for PII: ${pii}`);
+      return null;
+    } catch (err: any) {
+      console.error(`PubMed ESearch error:`, err);
+      if (attempt < retries) {
+        await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+        continue;
+      }
+      return null;
+    }
+  }
+  return null;
+}
+
+// PubMed API: Step 2 - EFetch to get full metadata from PMID
+async function pubmedEFetch(pmid: string, retries = 2): Promise<any> {
+  const efetchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=${encodeURIComponent(pmid)}&retmode=xml`;
+  
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      console.log(`PubMed EFetch attempt ${attempt + 1}/${retries + 1}: ${efetchUrl}`);
+      const resp = await fetch(efetchUrl, {
+        headers: {
+          'User-Agent': 'bioRxiv-Preview-Bot/1.0',
+          'Accept': 'application/xml',
+        },
+      });
+      
+      if (!resp.ok) {
+        if (resp.status >= 500 && attempt < retries) {
+          await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+          continue;
+        }
+        console.error(`PubMed EFetch error: ${resp.status}`);
+        return null;
+      }
+      
+      const xmlText = await resp.text();
+      return parsePubMedXML(xmlText);
+    } catch (err: any) {
+      console.error(`PubMed EFetch error:`, err);
+      if (attempt < retries) {
+        await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+        continue;
+      }
+      return null;
+    }
+  }
+  return null;
+}
+
+// Parse PubMed XML response
+function parsePubMedXML(xmlText: string): any {
+  try {
+    // Simple XML parsing using regex (for basic extraction)
+    // In production, you might want to use a proper XML parser
+    
+    // Extract title
+    const titleMatch = xmlText.match(/<ArticleTitle[^>]*>(.*?)<\/ArticleTitle>/s);
+    const title = titleMatch ? titleMatch[1].replace(/<[^>]+>/g, '').trim() : '';
+    
+    // Extract authors
+    const authorMatches = xmlText.matchAll(/<Author[^>]*>[\s\S]*?<LastName>([^<]+)<\/LastName>[\s\S]*?<ForeName>([^<]+)<\/ForeName>[\s\S]*?<\/Author>/g);
+    const authors: string[] = [];
+    for (const match of authorMatches) {
+      if (authors.length < 10) {
+        authors.push(`${match[2]} ${match[1]}`); // First Last format
+      }
+    }
+    const authorsStr = authors.length > 0 
+      ? (authors.length === 10 ? authors.join(', ') + ' et al.' : authors.join(', '))
+      : '';
+    
+    // Extract abstract
+    const abstractMatch = xmlText.match(/<AbstractText[^>]*>(.*?)<\/AbstractText>/s);
+    const abstract = abstractMatch ? abstractMatch[1].replace(/<[^>]+>/g, '').trim() : '';
+    
+    // Extract DOI
+    const doiMatch = xmlText.match(/<ArticleId[^>]*IdType="doi"[^>]*>([^<]+)<\/ArticleId>/);
+    const doi = doiMatch ? doiMatch[1] : '';
+    
+    return {
+      title,
+      authors: authorsStr,
+      abstract,
+      doi,
+    };
+  } catch (err: any) {
+    console.error('Error parsing PubMed XML:', err);
+    return null;
+  }
+}
+
+// Fetch metadata for Cell.com or ScienceDirect articles using PubMed API
+async function fetchCellScienceDirectMetadata(url: string, retries = 2): Promise<any> {
+  console.log(`========== CELL/SCIENCEDIRECT METADATA EXTRACTION ==========`);
+  console.log(`URL: ${url}`);
+  
+  // Step 1: Extract PII
+  const pii = extractPII(url);
+  if (!pii) {
+    console.error(`Could not extract PII from URL: ${url}`);
+    return null;
+  }
+  console.log(`Extracted PII: ${pii}`);
+  
+  // Step 2: ESearch to find PMID
+  const pmid = await pubmedESearch(pii, retries);
+  if (!pmid) {
+    console.error(`Could not find PMID for PII: ${pii}`);
+    // Fallback to HTML scraping could go here
+    return null;
+  }
+  console.log(`Found PMID: ${pmid}`);
+  
+  // Step 3: EFetch to get full metadata
+  const metadata = await pubmedEFetch(pmid, retries);
+  if (!metadata) {
+    console.error(`Could not fetch metadata for PMID: ${pmid}`);
+    return null;
+  }
+  
+  console.log(`========== METADATA EXTRACTED SUCCESSFULLY ==========`);
+  console.log(`Title: ${metadata.title?.substring(0, 100) || 'N/A'}...`);
+  console.log(`Authors: ${metadata.authors?.substring(0, 100) || 'N/A'}...`);
+  console.log(`Abstract length: ${metadata.abstract?.length || 0} chars`);
+  console.log(`DOI: ${metadata.doi || 'N/A'}`);
+  console.log(`=====================================================`);
+  
+  return metadata;
+}
 
 async function fetchRxivMetadata(server: RxivServer, doi: string, originalUrl: string, retries = 2): Promise<any> {
   // Use the working test-fetch endpoint as a proxy to avoid fetch issues
@@ -257,7 +459,7 @@ async function postErrorToSlack(channel: string, url: string, server: RxivServer
   }
 }
 
-async function postToSlack(channel: string, url: string, meta: any, server: RxivServer) {
+async function postToSlack(channel: string, url: string, meta: any, source: ArticleSource) {
   const title = meta.title || '(No title)';
   const authors = meta.authors || '(No authors listed)';
   let abstract = meta.abstract || '(No abstract)';
@@ -267,7 +469,24 @@ async function postToSlack(channel: string, url: string, meta: any, server: Rxiv
     abstract = abstract.slice(0, maxChars).trimEnd() + ' …';
   }
 
-  const label = server === 'biorxiv' ? 'bioRxiv' : 'medRxiv';
+  let label: string;
+  let emoji: string;
+  if (source === 'biorxiv') {
+    label = 'bioRxiv';
+    emoji = ':microscope:';
+  } else if (source === 'medrxiv') {
+    label = 'medRxiv';
+    emoji = ':microscope:';
+  } else if (source === 'cell') {
+    label = 'Cell';
+    emoji = ':cell:';
+  } else if (source === 'sciencedirect') {
+    label = 'ScienceDirect';
+    emoji = ':book:';
+  } else {
+    label = 'Article';
+    emoji = ':page_facing_up:';
+  }
 
   const body = {
     channel,
@@ -276,7 +495,7 @@ async function postToSlack(channel: string, url: string, meta: any, server: Rxiv
         type: 'section',
         text: {
           type: 'mrkdwn',
-          text: `*${label} preprint detected* :microscope:\n<${url}|*${title}*>`,
+          text: `*${label} article detected* ${emoji}\n<${url}|*${title}*>`,
         },
       },
       {
@@ -300,7 +519,7 @@ async function postToSlack(channel: string, url: string, meta: any, server: Rxiv
 
   console.log(`========== SLACK POST DETAILS ==========`);
   console.log(`Channel: ${channel}`);
-  console.log(`Server: ${server}`);
+  console.log(`Source: ${source}`);
   console.log(`Title: ${title.substring(0, 80)}...`);
   console.log(`Authors: ${authors.substring(0, 80)}...`);
   console.log(`Abstract length: ${abstract.length} chars`);
@@ -479,65 +698,52 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         console.log(`${requestId} Link domain: ${domain}`);
         console.log(`${requestId} Link URL: ${url}`);
 
-        let server: RxivServer | null = null;
-        if (domain === 'biorxiv.org') {
-          server = 'biorxiv';
-        } else if (domain === 'medrxiv.org') {
-          server = 'medrxiv';
-        } else if (url.includes('biorxiv.org')) {
-          server = 'biorxiv';
-        } else if (url.includes('medrxiv.org')) {
-          server = 'medrxiv';
+        let source: ArticleSource | null = null;
+        if (domain === 'biorxiv.org' || url.includes('biorxiv.org')) {
+          source = 'biorxiv';
+        } else if (domain === 'medrxiv.org' || url.includes('medrxiv.org')) {
+          source = 'medrxiv';
+        } else if (domain === 'cell.com' || url.includes('cell.com')) {
+          source = 'cell';
+        } else if (domain === 'sciencedirect.com' || url.includes('sciencedirect.com')) {
+          source = 'sciencedirect';
         }
 
-        console.log(`${requestId} Detected server: ${server || 'NONE'}`);
+        console.log(`${requestId} Detected source: ${source || 'NONE'}`);
 
-        if (!server) {
-          console.log(`${requestId} Not a bioRxiv/medRxiv link, skipping`);
-          continue;
-        }
-
-        const doi = extractDoi(url);
-        console.log(`${requestId} ========== DOI EXTRACTION ==========`);
-        console.log(`${requestId} Original URL: ${url}`);
-        console.log(`${requestId} Extracted DOI: ${doi || 'NONE'}`);
-        console.log(`${requestId} =====================================`);
-        if (!doi) {
-          console.log(`${requestId} Could not extract DOI from URL: ${url}`);
-          console.log(`${requestId} ========== POSTING ERROR TO SLACK ==========`);
-          console.log(`${requestId} Channel: ${channel}`);
-          console.log(`${requestId} URL: ${url}`);
-          console.log(`${requestId} Server: ${server}`);
-          try {
-            await postErrorToSlack(channel, url, server);
-            console.log(`${requestId} ✅ Successfully posted error message to Slack`);
-          } catch (slackErr) {
-            console.error(`${requestId} ❌ Error posting error message to Slack:`, slackErr);
-            console.error(`${requestId} Error stack:`, slackErr instanceof Error ? slackErr.stack : 'No stack trace');
-          }
-          console.log(`${requestId} ===========================================`);
+        if (!source) {
+          console.log(`${requestId} Not a supported link (bioRxiv/medRxiv/Cell/ScienceDirect), skipping`);
           continue;
         }
 
         try {
-          console.log(`${requestId} Fetching metadata for ${server} DOI: ${doi}`);
-          const meta = await fetchRxivMetadata(server, doi, url);
-          if (!meta) {
-            console.log(`${requestId} No metadata returned for ${server} DOI ${doi}`);
-            console.log(`${requestId} ========== POSTING ERROR TO SLACK ==========`);
-            console.log(`${requestId} Channel: ${channel}`);
-            console.log(`${requestId} URL: ${url}`);
-            console.log(`${requestId} Server: ${server}`);
-            try {
-              await postErrorToSlack(channel, url, server);
-              console.log(`${requestId} ✅ Successfully posted error message to Slack`);
-            } catch (slackErr) {
-              console.error(`${requestId} ❌ Error posting error message to Slack:`, slackErr);
-              console.error(`${requestId} Error stack:`, slackErr instanceof Error ? slackErr.stack : 'No stack trace');
+          let meta: any = null;
+          
+          if (source === 'biorxiv' || source === 'medrxiv') {
+            // Handle bioRxiv/medRxiv
+            const doi = extractDoi(url);
+            console.log(`${requestId} ========== DOI EXTRACTION ==========`);
+            console.log(`${requestId} Original URL: ${url}`);
+            console.log(`${requestId} Extracted DOI: ${doi || 'NONE'}`);
+            console.log(`${requestId} =====================================`);
+            if (!doi) {
+              console.log(`${requestId} Could not extract DOI from URL: ${url}`);
+              continue;
             }
-            console.log(`${requestId} ===========================================`);
+            
+            console.log(`${requestId} Fetching metadata for ${source} DOI: ${doi}`);
+            meta = await fetchRxivMetadata(source, doi, url);
+          } else if (source === 'cell' || source === 'sciencedirect') {
+            // Handle Cell.com and ScienceDirect using PubMed API
+            console.log(`${requestId} Fetching metadata for ${source} using PubMed API`);
+            meta = await fetchCellScienceDirectMetadata(url);
+          }
+          
+          if (!meta) {
+            console.log(`${requestId} No metadata returned for ${source} link: ${url}`);
             continue;
           }
+          
           console.log(`${requestId} ========== METADATA RETRIEVED ==========`);
           console.log(`${requestId} Title: ${meta.title?.substring(0, 100)}...`);
           console.log(`${requestId} Authors: ${meta.authors?.substring(0, 100)}...`);
@@ -547,9 +753,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           console.log(`${requestId} ========== POSTING TO SLACK ==========`);
           console.log(`${requestId} Channel: ${channel}`);
           console.log(`${requestId} URL: ${url}`);
-          console.log(`${requestId} Server: ${server}`);
+          console.log(`${requestId} Source: ${source}`);
           try {
-            await postToSlack(channel, url, meta, server);
+            await postToSlack(channel, url, meta, source);
             console.log(`${requestId} ✅ Successfully posted preview to Slack`);
           } catch (slackErr) {
             console.error(`${requestId} ❌ Error posting to Slack:`, slackErr);
@@ -558,7 +764,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
           console.log(`${requestId} ======================================`);
         } catch (err) {
-          console.error(`${requestId} Error handling ${server} link ${url}:`, err);
+          console.error(`${requestId} Error handling ${source} link ${url}:`, err);
           console.error(`${requestId} Error stack:`, err instanceof Error ? err.stack : 'No stack trace');
         }
       }
