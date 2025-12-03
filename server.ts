@@ -47,8 +47,9 @@ async function getBotUserId(): Promise<string | null> {
 // 1. 10.XXXXX/YYYY.MM.DD.number (with DOI prefix)
 // 2. YYYY.MM.DD.number (direct format in URL path)
 // Both optionally followed by vN version suffix
-// Returns YYYY.MM.DD.number (without prefix or version)
-const DOI_RE = /(?:10\.\d+\/)?(\d{4}\.\d{2}\.\d{2}\.\d+)(?:v\d+)?/;
+// Returns full DOI: 10.XXXXX/YYYY.MM.DD.number (uses 10.1101 as default prefix if not present)
+const DOI_RE_WITH_PREFIX = /(10\.\d+)\/(\d{4}\.\d{2}\.\d{2}\.\d+)(?:v\d+)?/;
+const DOI_RE_WITHOUT_PREFIX = /(\d{4}\.\d{2}\.\d{2}\.\d+)(?:v\d+)?/;
 
 // PII extraction regexes for Cell.com and ScienceDirect
 const CELL_PII_PATTERNS = [
@@ -108,9 +109,19 @@ function verifySlackRequest(req: express.Request, rawBody: Buffer): boolean {
 }
 
 function extractDoi(url: string): string | null {
-  const m = DOI_RE.exec(url);
-  if (!m) return null;
-  return m[1]; // without the version suffix
+  // Try to match with prefix first
+  let m = DOI_RE_WITH_PREFIX.exec(url);
+  if (m) {
+    return `${m[1]}/${m[2]}`; // Return 10.XXXXX/YYYY.MM.DD.number
+  }
+  
+  // If no prefix, try without prefix and use default 10.1101
+  m = DOI_RE_WITHOUT_PREFIX.exec(url);
+  if (m) {
+    return `10.1101/${m[1]}`; // Return 10.1101/YYYY.MM.DD.number (default prefix)
+  }
+  
+  return null;
 }
 
 type RxivServer = 'biorxiv' | 'medrxiv';
