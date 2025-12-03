@@ -1,6 +1,10 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import crypto from 'crypto';
 import fetch from 'node-fetch';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 
 const SLACK_SIGNING_SECRET = process.env.SLACK_SIGNING_SECRET!;
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN!;
@@ -316,28 +320,33 @@ async function fetchRxivMetadata(server: RxivServer, doi: string, originalUrl: s
     console.log(`========== API ATTEMPT ${attempt + 1}/${retries + 1} ==========`);
     try {
       const startTime = Date.now();
-      console.log(`Calling test-fetch endpoint: ${testFetchUrl}`);
+      console.log(`Calling test-fetch endpoint with curl: ${testFetchUrl}`);
 
-      const resp = await fetch(testFetchUrl, {
-        headers: { 'Accept': 'application/json' },
+      // Use curl instead of fetch to bypass Vercel blocking
+      const curlCommand = `curl -s -H "Accept: application/json" "${testFetchUrl}"`;
+      console.log(`Executing curl command: ${curlCommand}`);
+      
+      const { stdout, stderr } = await execAsync(curlCommand, {
+        timeout: 30000, // 30 second timeout
       });
       
-      if (!resp.ok) {
-        console.error(`Test-fetch endpoint error: ${resp.status}`);
-        if (resp.status >= 500 && attempt < retries) {
-          // Retry on server errors
-          const delay = Math.pow(2, attempt) * 1000; // Exponential backoff: 1s, 2s, 4s
-          console.log(`Server error, retrying in ${delay}ms...`);
+      if (stderr) {
+        console.error(`Curl stderr: ${stderr}`);
+      }
+      
+      if (!stdout || stdout.trim().length === 0) {
+        console.error(`Curl returned empty response`);
+        if (attempt < retries) {
+          const delay = Math.pow(2, attempt) * 1000;
+          console.log(`Empty response, retrying in ${delay}ms...`);
           await new Promise(resolve => setTimeout(resolve, delay));
           continue;
         }
-        const errorText = await resp.text();
-        console.error(`API error response: ${errorText.substring(0, 500)}`);
         return null;
       }
 
       console.log(`Parsing JSON response...`);
-      const json: any = await resp.json();
+      const json: any = JSON.parse(stdout);
       console.log(`JSON parsed successfully`);
       
       if (!json.success) {
@@ -363,10 +372,11 @@ async function fetchRxivMetadata(server: RxivServer, doi: string, originalUrl: s
       
       return metadata;
     } catch (err: any) {
-      const isTimeout = err.message?.includes('timeout');
+      const isTimeout = err.message?.includes('timeout') || err.code === 'ETIMEDOUT';
       const isNetworkError = err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT' || err.code === 'ENOTFOUND' || err.code === 'ECONNREFUSED';
+      const isJSONParseError = err instanceof SyntaxError && err.message?.includes('JSON');
       
-      console.error(`========== API CALL FAILED ==========`);
+      console.error(`========== CURL CALL FAILED ==========`);
       console.error(`Attempt: ${attempt + 1}/${retries + 1}`);
       console.error(`Exception type: ${err.name || err.type || 'Unknown'}`);
       console.error(`Exception message: ${err.message || 'No message'}`);
@@ -374,6 +384,11 @@ async function fetchRxivMetadata(server: RxivServer, doi: string, originalUrl: s
       console.error(`Full error:`, err);
       console.error(`Exception stack:`, err instanceof Error ? err.stack : 'No stack trace');
       console.error(`=====================================`);
+      
+      // If JSON parse error, try to log what we got
+      if (isJSONParseError && err.message) {
+        console.error(`JSON parse error - response may not be valid JSON`);
+      }
       
       if ((isTimeout || isNetworkError) && attempt < retries) {
         const delay = Math.pow(2, attempt) * 1000; // Exponential backoff: 1s, 2s, 4s
