@@ -405,12 +405,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return;
       }
 
-      // Fire-and-forget processing; respond quickly to Slack
-      console.log(`${requestId} Sending OK response to Slack, processing links asynchronously...`);
-      res.status(200).send('OK');
-
       if (!links || links.length === 0) {
         console.log(`${requestId} No links found in event`);
+        res.status(200).send('OK');
         return;
       }
 
@@ -508,6 +505,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       console.log(`${requestId} ========== Finished processing link_shared event ==========`);
+      res.status(200).send('OK');
       return;
     } else {
       console.log(`${requestId} Event type '${event?.type}' is not 'link_shared', ignoring`);
