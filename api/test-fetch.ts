@@ -1,13 +1,28 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import fetch from 'node-fetch';
 
-// Same regex and logic from the main code
-const DOI_RE = /(10\.1101\/\d{4}\.\d{2}\.\d{2}\.\d+)(?:v\d+)?/;
+// Regex: Matches bioRxiv DOI in two formats:
+// 1. 10.XXXXX/YYYY.MM.DD.number (with DOI prefix)
+// 2. YYYY.MM.DD.number (direct format in URL path)
+// Both optionally followed by vN version suffix
+// Returns full DOI: 10.XXXXX/YYYY.MM.DD.number (uses 10.1101 as default prefix if not present)
+const DOI_RE_WITH_PREFIX = /(10\.\d+)\/(\d{4}\.\d{2}\.\d{2}\.\d+)(?:v\d+)?/;
+const DOI_RE_WITHOUT_PREFIX = /(\d{4}\.\d{2}\.\d{2}\.\d+)(?:v\d+)?/;
 
 function extractDoi(url: string): string | null {
-  const m = DOI_RE.exec(url);
-  if (!m) return null;
-  return m[1]; // without the version suffix
+  // Try to match with prefix first
+  let m = DOI_RE_WITH_PREFIX.exec(url);
+  if (m) {
+    return `${m[1]}/${m[2]}`; // Return 10.XXXXX/YYYY.MM.DD.number
+  }
+  
+  // If no prefix, try without prefix and use default 10.1101
+  m = DOI_RE_WITHOUT_PREFIX.exec(url);
+  if (m) {
+    return `10.1101/${m[1]}`; // Return 10.1101/YYYY.MM.DD.number (default prefix)
+  }
+  
+  return null;
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
