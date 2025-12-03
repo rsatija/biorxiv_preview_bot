@@ -327,6 +327,27 @@ async function fetchRxivMetadata(server: RxivServer, doi: string, originalUrl: s
       const curlCommand = `curl -s --max-time 5 -H "Accept: application/json" "${testFetchUrl}"`;
       console.log(`Executing curls command: ${curlCommand}`);
       console.log('Debug 1')
+      // Test if exec works
+      try {
+        const { stdout } = await execAsync('echo "test"', { timeout: 1000 });
+        console.log('exec works:', stdout);
+      } catch (err) {
+        console.error('exec failed:', err);
+      }
+      try {
+        const { stdout } = await execAsync('curl --version', { timeout: 2000 });
+        console.log('curl version:', stdout);
+      } catch (err) {
+        console.error('curl not found:', err);
+      }
+      try {
+        const { stdout } = await execAsync('which curl', { timeout: 2000 });
+        console.log('curl location:', stdout);
+      } catch (err) {
+        console.error('curl not in PATH:', err);
+      }
+      const { stdout } = await execAsync('ls -la', { timeout: 2000 });
+      console.log('ls output:', stdout);
       const { stdout, stderr } = await execAsync(curlCommand, {
         timeout: 6000, // 6 second timeout (slightly longer than curl's max-time)
       });
