@@ -109,7 +109,7 @@ function extractDoi(url: string): string | null {
 }
 
 type RxivServer = 'biorxiv' | 'medrxiv';
-type ArticleSource = RxivServer | 'cell' | 'sciencedirect';
+type ArticleSource = RxivServer | 'cell' | 'sciencedirect' | 'science';
 
 // Extract PII from Cell.com or ScienceDirect URLs
 function extractPII(url: string): string | null {
@@ -135,6 +135,16 @@ function extractPII(url: string): string | null {
     return genericMatch[1];
   }
   
+  return null;
+}
+
+// Extract DOI from Science.org URLs
+function extractScienceDOI(url: string): string | null {
+  // Science.org DOI URLs: https://www.science.org/doi/10.1126/...
+  const match = url.match(/doi\/(10\.\d+\/[^\s?&#]+)/);
+  if (match) {
+    return match[1];
+  }
   return null;
 }
 
@@ -470,6 +480,32 @@ async function fetchCellScienceDirectMetadata(url: string, retries = 2): Promise
   return metadata;
 }
 
+// Fetch metadata for Science.org articles using PubMed API
+async function fetchScienceOrgMetadata(url: string, retries = 2): Promise<any> {
+  // Step 1: Extract DOI
+  const doi = extractScienceDOI(url);
+  if (!doi) {
+    console.error(`Could not extract DOI from Science.org URL: ${url}`);
+    return null;
+  }
+
+  // Step 2: Search PubMed using DOI
+  const pmid = await pubmedESearchByDoi(doi, retries);
+  if (!pmid) {
+    console.error(`Could not find PMID for Science.org DOI: ${doi}`);
+    return null;
+  }
+
+  // Step 3: EFetch to get full metadata
+  const metadata = await pubmedEFetch(pmid, retries);
+  if (!metadata) {
+    console.error(`Could not fetch metadata for PMID: ${pmid}`);
+    return null;
+  }
+
+  return metadata;
+}
+
 async function fetchRxivMetadata(server: RxivServer, doi: string, originalUrl: string, retries = 2): Promise<any> {
   // Use the working test-fetch endpoint as a proxy to avoid fetch issues
   // Always use the production URL
@@ -653,6 +689,9 @@ async function postToSlack(channel: string, url: string, meta: any, source: Arti
     emoji = ':cell:';
   } else if (source === 'sciencedirect') {
     label = 'ScienceDirect';
+    emoji = ':book:';
+  } else if (source === 'science') {
+    label = 'Science';
     emoji = ':book:';
   } else {
     label = 'Article';
@@ -878,12 +917,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           source = 'cell';
         } else if (domain === 'sciencedirect.com' || url.includes('sciencedirect.com')) {
           source = 'sciencedirect';
+        } else if (domain === 'science.org' || url.includes('science.org')) {
+          source = 'science';
         }
 
         console.log(`${requestId} Detected source: ${source || 'NONE'}`);
 
         if (!source) {
-          console.log(`${requestId} Not a supported link (bioRxiv/medRxiv/Cell/ScienceDirect), skipping`);
+          console.log(`${requestId} Not a supported link (bioRxiv/medRxiv/Cell/ScienceDirect/Science), skipping`);
           continue;
         }
 
@@ -905,9 +946,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             console.log(`${requestId} Fetching metadata for ${source} DOI: ${doi}`);
             meta = await fetchRxivMetadata(source, doi, url);
           } else if (source === 'cell' || source === 'sciencedirect') {
-            // Handle Cell.com and ScienceDirect using PubMed API
+            // Handle Cell.com and ScienceDirect using PubMed API (PII-based)
             console.log(`${requestId} Fetching metadata for ${source} using PubMed API`);
             meta = await fetchCellScienceDirectMetadata(url);
+          } else if (source === 'science') {
+            // Handle Science.org using PubMed API (DOI-based)
+            console.log(`${requestId} Fetching metadata for ${source} using PubMed API`);
+            meta = await fetchScienceOrgMetadata(url);
           }
           
           if (!meta) {
