@@ -244,6 +244,46 @@ async function pubmedEFetch(pmid: string, retries = 2): Promise<any> {
   return null;
 }
 
+// Search PubMed using DOI instead of PII
+async function pubmedESearchByDoi(doi: string, retries = 2): Promise<string | null> {
+  const esearchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(doi)}[DOI]&retmode=json`;
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const resp = await fetch(esearchUrl, {
+        headers: {
+          'User-Agent': 'bioRxiv-Preview-Bot/1.0',
+          'Accept': 'application/json',
+        },
+      });
+
+      if (!resp.ok) {
+        if (resp.status >= 500 && attempt < retries) {
+          await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+          continue;
+        }
+        console.error(`PubMed ESearch by DOI error: ${resp.status}`);
+        return null;
+      }
+
+      const json: any = await resp.json();
+      const idList = json?.esearchresult?.idlist;
+      if (Array.isArray(idList) && idList.length > 0) {
+        return idList[0];
+      }
+      return null;
+    } catch (err: any) {
+      console.error(`PubMed ESearch by DOI error:`, err);
+      if (attempt < retries) {
+        await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+        continue;
+      }
+      return null;
+    }
+  }
+  return null;
+}
+
 // Parse PubMed XML response
 function parsePubMedXML(xmlText: string): any {
   try {
@@ -335,43 +375,7 @@ async function fetchScienceOrgMetadata(url: string, retries = 2): Promise<any> {
   }
 
   // Step 2: Search PubMed using DOI
-  const esearchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(doi)}[DOI]&retmode=json`;
-
-  let pmid: string | null = null;
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      const resp = await fetch(esearchUrl, {
-        headers: {
-          'User-Agent': 'bioRxiv-Preview-Bot/1.0',
-          'Accept': 'application/json',
-        },
-      });
-
-      if (!resp.ok) {
-        if (resp.status >= 500 && attempt < retries) {
-          await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
-          continue;
-        }
-        console.error(`PubMed ESearch error: ${resp.status}`);
-        break;
-      }
-
-      const json: any = await resp.json();
-      const idList = json?.esearchresult?.idlist;
-      if (Array.isArray(idList) && idList.length > 0) {
-        pmid = idList[0];
-        break;
-      }
-      break;
-    } catch (err: any) {
-      console.error(`PubMed ESearch error:`, err);
-      if (attempt < retries) {
-        await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
-        continue;
-      }
-    }
-  }
-
+  const pmid = await pubmedESearchByDoi(doi, retries);
   if (!pmid) {
     console.error(`Could not find PMID for Science.org DOI: ${doi}`);
     return null;
